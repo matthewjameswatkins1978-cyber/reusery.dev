@@ -1,6 +1,8 @@
 I need a Go component for running child processes. It needs to cap stdout and
-stderr so a noisy child cannot consume unlimited memory. It must support both a
-timeout and caller cancellation. I need stdout and stderr kept separate, and
-the result must distinguish failure to start, non-zero exit, timeout and
-cancellation. It should behave safely around child processes on supported
-platforms.
+stderr so a noisy child cannot consume unlimited memory; when a stream reaches
+the cap, keep what fits, drop the rest and report the truncation instead of
+failing the run. It must support both a timeout and caller cancellation, and
+both must stop the child process and anything it spawned. I need stdout and
+stderr kept separate, and the result must distinguish failure to start,
+non-zero exit, timeout and cancellation. It has to run on Linux, macOS and
+Windows.

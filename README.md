@@ -186,6 +186,10 @@ silently guessed.
 > normaliser tests use a fake provider. See
 > [docs/intent-normalisation.md](docs/intent-normalisation.md).
 
+> The default model is `gpt-5.6-luna`; it must be available on your OpenAI
+> account. If the provider reports `model_not_found`, set
+> `REUSERY_OPENAI_MODEL` to a model your account exposes.
+
 ## Testing
 
 ```powershell

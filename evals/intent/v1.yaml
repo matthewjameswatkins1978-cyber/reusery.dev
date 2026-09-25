@@ -21,22 +21,24 @@ cases:
     category: bounded-subprocess
     text: |
       I need a Go component for running child processes. It needs to cap stdout and
-      stderr so a noisy child cannot consume unlimited memory. It must support both a
-      timeout and caller cancellation. I need stdout and stderr kept separate, and
-      the result must distinguish failure to start, non-zero exit, timeout and
-      cancellation. It should behave safely around child processes on supported
-      platforms.
+      stderr so a noisy child cannot consume unlimited memory; when a stream reaches
+      the cap, keep what fits, drop the rest and report the truncation instead of
+      failing the run. It must support both a timeout and caller cancellation, and
+      both must stop the child process and anything it spawned. I need stdout and
+      stderr kept separate, and the result must distinguish failure to start,
+      non-zero exit, timeout and cancellation. It has to run on Linux, macOS and
+      Windows.
     expectations:
       expected_status: ready
-      expected_artifact_level: unspecified
       min_requirements: 5
       required_constraint_kinds: [language]
       required_requirement_terms:
         - [stdout]
         - [stderr]
         - [timeout, deadline]
-        - [cancel, cancellation, cancelled]
+        - [cancel, cancellation, cancelling]
         - [exit]
+        - [truncat]
       forbidden_concepts: [confidence]
 
   - id: bounded-02-outcomes
@@ -65,11 +67,10 @@ cases:
       never lets the child's output fill memory.
     expectations:
       expected_status: ready
-      expected_artifact_level: unspecified
       min_requirements: 3
       required_constraint_kinds: [language]
       required_requirement_terms:
-        - [timeout, times out]
+        - [timeout, times out, deadline]
         - [stop, stops, cancel, cancellation, gives up]
         - [output]
 
@@ -96,7 +97,6 @@ cases:
       reason when the child fails.
     expectations:
       expected_status: ready
-      expected_artifact_level: unspecified
       min_requirements: 4
       required_constraint_kinds: [language]
       required_requirement_terms:
@@ -191,7 +191,7 @@ cases:
   - id: code-01-command-timeout
     category: code
     text: |
-      Write me the code for running a command with a timeout.
+      Write me Go code for running a command with a timeout.
     expectations:
       expected_status: ready
       expected_artifact_level: code
@@ -280,8 +280,8 @@ cases:
   - id: platform-01-three-operating-systems
     category: platform
     text: |
-      I need a Go library for reading process information that must run on Linux,
-      macOS and Windows.
+      I need a Go library for reading process IDs, names and parent/child
+      relationships that must run on Linux, macOS and Windows.
     expectations:
       expected_status: ready
       expected_artifact_level: library
@@ -291,8 +291,8 @@ cases:
   - id: runtime-01-modern-go-no-cgo
     category: runtime
     text: |
-      I need a Go library for scheduling background jobs that must run on Go 1.24 or
-      newer and must not require CGO.
+      I need a Go library for scheduling delayed and periodic background jobs
+      that must run on Go 1.24 or newer and must not require CGO.
     expectations:
       expected_status: ready
       expected_artifact_level: library
