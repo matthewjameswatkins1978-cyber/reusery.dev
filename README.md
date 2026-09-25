@@ -17,8 +17,9 @@ The registry is memory. The resolver is the product.
 ## Status
 
 Early design and implementation. The repository currently holds the
-Packet 1 engineering foundation: a small production-shaped Go HTTP server,
-structured logging, health endpoints and a quality baseline. See
+engineering foundation and persistence floor: a production-shaped Go HTTP
+server with structured logging and health endpoints, a deterministic evidence
+evaluator, and PostgreSQL-backed storage for the core domain model. See
 [VISION.md](VISION.md), [MODEL.md](MODEL.md), and [RESOLVER.md](RESOLVER.md)
 for the product design, and [docs/engineering.md](docs/engineering.md) for
 foundation decisions.
@@ -26,9 +27,14 @@ foundation decisions.
 ## Requirements
 
 - Go 1.27.1 (see [docs/engineering.md](docs/engineering.md) for toolchain notes)
-- `golangci-lint` v2.14.0 and `govulncheck` v1.8.0 for the full check
+- PostgreSQL (required at runtime; see below)
+- `golangci-lint` v2.14.0, `govulncheck` v1.8.0, `sqlc` v1.31.1 and
+  `goose` v3.28.0 for the full check
+- Docker, only for the integration tests
 
 ## Running locally
+
+Start PostgreSQL, then:
 
 ```powershell
 go run ./cmd/reusery
@@ -39,12 +45,31 @@ Configuration via environment (see `.env.example`):
 ```text
 REUSERY_HTTP_ADDR=:8080
 REUSERY_LOG_LEVEL=info
+REUSERY_DATABASE_URL=postgres://reusery:reusery@localhost:5432/reusery?sslmode=disable
+```
+
+`REUSERY_DATABASE_URL` is required and never logged. Startup fails clearly if
+it is missing, malformed or unreachable.
+
+### Database migrations
+
+Migrations are applied explicitly, never automatically on HTTP startup:
+
+```powershell
+goose -dir internal/store/postgres/migrations postgres "$REUSERY_DATABASE_URL" up
 ```
 
 ## Testing
 
 ```powershell
 go test ./...
+```
+
+Integration tests need Docker and use a real ephemeral PostgreSQL via
+Testcontainers:
+
+```powershell
+go test -tags=integration ./internal/store/postgres/...
 ```
 
 ## Full project check
@@ -61,7 +86,8 @@ With `make` (incl. CI on Linux):
 make check
 ```
 
-This runs: `gofmt`, `go vet`, `go test`, `golangci-lint`, `govulncheck`, `go build`.
+This runs: `gofmt`, `sqlc generate` + drift check, `go vet`, `go test`,
+integration tests, `golangci-lint`, `govulncheck`, `go build`.
 
 ## Health check
 
@@ -70,8 +96,9 @@ http://localhost:8080/health
 http://localhost:8080/ready
 ```
 
-Both return `{"status":"ok"}` with HTTP 200. `/ready` will gain a
-PostgreSQL readiness check in Packet 2.
+Both return `{"status":"ok"}` with HTTP 200. `/health` never touches the
+database; `/ready` reflects PostgreSQL connectivity and returns
+`{"status":"not ready"}` (HTTP 503) when it fails.
 
 ## Architecture
 
@@ -88,6 +115,8 @@ scripts    developer automation
 - `internal/model` — core domain model (Primitive, Contract, Specimen, Evidence, Resolution).
 - `internal/resolver` — deterministic evidence evaluation per contract requirement
   (see [docs/evidence-evaluation.md](docs/evidence-evaluation.md)).
+- `internal/store/postgres` — PostgreSQL persistence (pgx pool, Goose
+  migrations, hand-written sqlc mapping layer).
 
 Source-shaped project assets live outside Go:
 

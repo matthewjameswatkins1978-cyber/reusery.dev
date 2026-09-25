@@ -9,6 +9,8 @@ $ErrorActionPreference = 'Stop'
 # Pinned versions — keep in sync with docs/engineering.md and .github/workflows/ci.yml.
 $GolangciLintVersion = 'v2.14.0'
 $GovulncheckVersion = 'v1.8.0' # golang.org/x/vuln release; keep pinned
+$SqlcVersion = 'v1.31.1'
+$GooseVersion = 'v3.28.0'
 
 Write-Host "==> Installing golangci-lint $GolangciLintVersion (binary download)"
 $triplet = 'windows-amd64'
@@ -30,5 +32,11 @@ Remove-Item -Recurse -Force $dest
 Write-Host "==> Installing govulncheck $GovulncheckVersion"
 go install "golang.org/x/vuln/cmd/govulncheck@$GovulncheckVersion"
 
+Write-Host "==> Installing sqlc $SqlcVersion"
+go install "github.com/sqlc-dev/sqlc/cmd/sqlc@$SqlcVersion"
+
+Write-Host "==> Installing goose $GooseVersion"
+go install "github.com/pressly/goose/v3/cmd/goose@$GooseVersion"
+
 Write-Host ""
-Write-Host "Done. Verify with: golangci-lint version; govulncheck -version"
+Write-Host "Done. Verify with: golangci-lint version; govulncheck -version; sqlc version; goose -version"

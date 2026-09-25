@@ -21,7 +21,7 @@ const (
 const ShutdownTimeout = 10 * time.Second
 
 // ReadyChecker reports whether a dependency required for serving traffic is
-// ready. Packet 1 registers no checkers; Packet 2 will add PostgreSQL here.
+// ready. Packet 3 registers the PostgreSQL checker; /health never uses these.
 type ReadyChecker func(ctx context.Context) error
 
 // Server wraps http.Server with the application's routes.
@@ -87,8 +87,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	s.writeStatus(w, http.StatusOK, "ok")
 }
 
-// handleReady reports readiness. Each registered checker must pass;
-// with no checkers (Packet 1) readiness is trivially ok.
+// handleReady reports readiness. Each registered checker must pass; in
+// production the PostgreSQL readiness checker is registered here.
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	for _, check := range s.checkers {
 		if err := check(r.Context()); err != nil {

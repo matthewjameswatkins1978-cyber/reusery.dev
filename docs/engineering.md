@@ -1,8 +1,8 @@
-# Reusery.dev — Engineering Notes (Packet 1)
+# Reusery.dev — Engineering Notes
 
-Foundation decisions for the bootstrap. Future agents: these choices are
-intentional — do not "improve" them back into complexity without a packet
-that asks for it.
+Foundation decisions for the bootstrap and persistence floor. Future agents:
+these choices are intentional — do not "improve" them back into complexity
+without a packet that asks for it.
 
 ## Go version
 
@@ -32,18 +32,19 @@ needed until a telemetry packet arrives.
 
 ## Why no other frameworks/dependencies
 
-`go.mod` has zero third-party requirements by design. PostgreSQL drivers,
-migrations, auth, Redis, queues, ORMs, search and telemetry all belong to
-later packets. Each future dependency must justify itself against the
-standard library first.
+Packet 1 had zero third-party requirements. Packet 3 adds the persistence
+stack only: `pgx`, `sqlc`, Goose and Testcontainers (test-only). Auth, Redis,
+queues, ORMs, search and telemetry still belong to later packets. Each future
+dependency must justify itself against the standard library first.
 
 ## Configuration
 
-`internal/config` reads two environment variables with development defaults:
+`internal/config` reads these environment variables:
 
 ```text
-REUSERY_HTTP_ADDR=:8080
-REUSERY_LOG_LEVEL=info
+REUSERY_HTTP_ADDR=:8080             # default, optional
+REUSERY_LOG_LEVEL=info              # default, optional
+REUSERY_DATABASE_URL=postgres://... # REQUIRED (Packet 3 onwards)
 ```
 
 No config framework: `os.Getenv` plus a small parser is sufficient.
@@ -51,25 +52,103 @@ No config framework: `os.Getenv` plus a small parser is sufficient.
 crash startup nor silently disable logging. Copy `.env.example` to `.env`
 for local overrides; `.env` is git-ignored and must never be committed.
 
+`Load()` returns `(Config, error)`. Since Packet 3 the database URL is
+mandatory and validated (postgres/postgresql URL or libpq keyword form), so
+startup fails clearly instead of falling back to an invented credential. The
+URL may contain a password, so it is never logged and never included in a
+config error message.
+
 ## HTTP server
 
 `internal/server` owns construction and lifecycle; `cmd/reusery/main.go`
 stays thin (wire config → logger → server → signals).
 
 - Timeouts: read 10s, read-header 5s, write 10s, idle 60s, shutdown 10s.
-- `GET /health` — liveness only, never touches external systems.
-- `GET /ready` — runs registered `ReadyChecker`s; Packet 1 registers none,
-  so it returns ok. Packet 2 adds PostgreSQL as a checker without changing
-  the handler shape. A failing checker yields HTTP 503 `{"status":"not ready"}`.
+- `GET /health` — liveness only, never touches PostgreSQL.
+- `GET /ready` — runs registered `ReadyChecker`s. Packet 3 registers the
+  PostgreSQL readiness checker here; a failing checker yields HTTP 503
+  `{"status":"not ready"}` without leaking database diagnostics. Before
+  Packet 3 there were no checkers, so it was trivially ok.
 - Shutdown: `signal.NotifyContext` on Ctrl+C/SIGTERM → `Server.Shutdown`
-  with a 10s bound → startup and shutdown both logged via `slog`.
+  with a 10s bound → startup and shutdown both logged via `slog`. The pool is
+  closed during the same shutdown.
+
+## PostgreSQL persistence (Packet 3)
+
+Layout: `internal/store/postgres/{pool,migrate,store,mappings}.go`, authored
+SQL in `queries/`, reversible Goose migrations in `migrations/`, generated
+code in `sqlc/` (checked into Git), config in `sqlc.yaml`.
+
+### Why pgx
+
+`github.com/jackc/pgx/v5` is the standard low-level PostgreSQL driver: a real
+connection pool (`pgxpool`), full PostgreSQL type support, no ORM on top.
+pgx defaults are used for pool tuning; no numbers were invented without
+evidence.
+
+### Why sqlc rather than an ORM
+
+sqlc generates ordinary Go from authored SQL and keeps the SQL reviewable
+next to the schema. It gives compile-time-checked queries without hiding SQL
+behind an ORM abstraction or a reflection layer. Generated code lives in its
+own subpackage and is never exposed as the domain model: a hand-written layer
+(`mappings.go`) converts between sqlc row structs and `internal/model`. The
+resolver still only ever sees `internal/model`.
+
+### Why Goose
+
+Goose is a tiny migration runner with reversible `-- +goose Down` sections and
+a plain Go library API, so tests can migrate from zero. Migration files stay
+reviewable SQL. SQL is **not** executed automatically on every HTTP start:
+`Migrate(ctx, pool)` is a separate, explicit operation. The documented
+operator command is:
+
+```powershell
+goose -dir internal/store/postgres/migrations postgres "$REUSERY_DATABASE_URL" up
+```
+
+The eventual production deployment packet decides exactly where migrations
+execute.
+
+### Schema rules
+
+- Textual domain IDs are stored as `text`, not UUIDs.
+- Requirement order is an explicit `position` column
+  (`UNIQUE(contract_id, position)`), with `PRIMARY KEY(contract_id,
+  requirement_id)` so duplicate IDs inside one contract are impossible.
+- Rejection order is an explicit `position` column.
+- Ordered slices that have no row identity (tags, reasons, unknowns,
+  evidence IDs, reuse modes) are PostgreSQL arrays, not extra tables.
+- `Evidence.result` is CHECK-constrained to exactly
+  `pass|fail|unknown|info`; `unknown` is a real stored value.
+- `Resolution` gets a storage-only `BIGINT ... AS IDENTITY` key; that key is
+  never added to `internal/model`. `Resolution.SpecimenID` is nullable so
+  `BUILD LOCALLY` persists without a specimen.
+- `Evidence.SubjectID` has **no** foreign key: it is deliberately more
+  general than `SpecimenID` so evidence can later attach to other subjects.
+
+### Tests: real PostgreSQL only
+
+Integration tests are guarded by `//go:build integration` and use
+Testcontainers with a pinned `postgres:18.6-alpine`. No SQLite, no mocks, no
+in-memory fake — the point is to test PostgreSQL. Run them with:
+
+```powershell
+go test -tags=integration ./internal/store/postgres/...
+```
+
+Docker must be running. CI runs them on GitHub-hosted Linux runners, which
+have Docker available.
 
 ## Quality checks
 
 ```powershell
 gofmt -l -w .            # formatting (write)
+sqlc generate            # regenerate query code
+git diff --exit-code -- internal/store/postgres/sqlc   # drift check
 go vet ./...             # static analysis
-go test ./...            # tests
+go test ./...            # unit tests
+go test -tags=integration ./internal/store/postgres/... # Docker required
 golangci-lint run ./...  # lint (config: .golangci.yml)
 govulncheck ./...        # vulnerability scan
 go build ./cmd/reusery   # build
@@ -79,20 +158,28 @@ go build ./cmd/reusery   # build
   is the equivalent for make-based environments and is mirrored in CI.
 - `./scripts/install-tools.ps1` installs the pinned tools into `GOPATH/bin`.
 - Pinned tool versions:
-  - golangci-lint **v2.14.0** (latest release at time of writing)
+  - golangci-lint **v2.14.0**
   - govulncheck **v1.8.0** (`golang.org/x/vuln` release)
+  - sqlc **v1.31.1**
+  - goose **v3.28.0**
+  - Testcontainers image **postgres:18.6-alpine** (a Go test dependency, not
+    an installed binary)
 - Tools install into `GOPATH/bin` (`C:\Users\Matmus\go\bin` here); that
-  directory must be on `PATH` for `golangci-lint`/`govulncheck` to resolve.
+  directory must be on `PATH` for them to resolve.
 - CI (`.github/workflows/ci.yml`) uses current action majors:
   `actions/checkout@v6`, `actions/setup-go@v6` (Go 1.27.1),
-  `golangci/golangci-lint-action@v9` (golangci-lint v2.14.0), plus a
-  `govulncheck` step.
+  `golangci/golangci-lint-action@v9` (golangci-lint v2.14.0), plus
+  `govulncheck` and the sqlc drift check.
 
 ## Tests
 
 Standard `testing` only. Coverage is behavioural, not numeric:
 
-- `internal/config` — defaults, env overrides, blank-value handling, level parsing.
+- `internal/config` — defaults, env overrides, blank-value handling, missing
+  and malformed database URL rejection, level parsing.
 - `internal/server` — `/health` and `/ready` status codes, JSON bodies,
-  content-type headers, and the failing-checker 503 path that Packet 2
-  will exercise for real.
+  content-type headers, and the failing-checker 503 path.
+- `internal/resolver` — deterministic evaluation semantics (Packet 2).
+- `internal/store/postgres` (`-tags=integration`) — migration up/down/up,
+  round-trips for every domain object, requirement and rejection ordering,
+  transaction rollback, readiness, and `persist → reload → resolver.Evaluate`.

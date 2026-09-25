@@ -2,6 +2,10 @@
 <#
 .SYNOPSIS
   Runs the full Reusery.dev verification (Windows equivalent of `make check`).
+
+.DESCRIPTION
+  Requires golangci-lint, govulncheck, sqlc and goose on PATH (see
+  scripts/install-tools.ps1). The integration step requires Docker.
 #>
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -18,8 +22,11 @@ function Invoke-Step {
 
 # Format first (idempotent write), so later steps always see formatted code.
 Invoke-Step 'gofmt -l -w .'
+Invoke-Step 'sqlc generate'
+Invoke-Step 'git diff --exit-code -- internal/store/postgres/sqlc'
 Invoke-Step 'go vet ./...'
 Invoke-Step 'go test ./...'
+Invoke-Step 'go test -tags=integration ./internal/store/postgres/...'
 Invoke-Step 'golangci-lint run ./...'
 Invoke-Step 'govulncheck ./...'
 Invoke-Step 'go build ./cmd/reusery'

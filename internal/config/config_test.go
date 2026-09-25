@@ -1,15 +1,22 @@
 package config
 
 import (
+	"errors"
 	"log/slog"
 	"testing"
 )
 
+const testDatabaseURL = "postgres://reusery:secret@localhost:5432/reusery?sslmode=disable"
+
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv(EnvHTTPAddr, "")
 	t.Setenv(EnvLogLevel, "")
+	t.Setenv(EnvDatabaseURL, testDatabaseURL)
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 
 	if cfg.HTTPAddr != DefaultHTTPAddr {
 		t.Errorf("HTTPAddr = %q, want default %q", cfg.HTTPAddr, DefaultHTTPAddr)
@@ -17,13 +24,20 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, slog.LevelInfo)
 	}
+	if cfg.DatabaseURL != testDatabaseURL {
+		t.Errorf("DatabaseURL = %q, want %q", cfg.DatabaseURL, testDatabaseURL)
+	}
 }
 
 func TestLoadFromEnv(t *testing.T) {
 	t.Setenv(EnvHTTPAddr, "127.0.0.1:9090")
 	t.Setenv(EnvLogLevel, "debug")
+	t.Setenv(EnvDatabaseURL, testDatabaseURL)
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 
 	if cfg.HTTPAddr != "127.0.0.1:9090" {
 		t.Errorf("HTTPAddr = %q, want %q", cfg.HTTPAddr, "127.0.0.1:9090")
@@ -35,11 +49,51 @@ func TestLoadFromEnv(t *testing.T) {
 
 func TestLoadIgnoresBlankAddr(t *testing.T) {
 	t.Setenv(EnvHTTPAddr, "   ")
+	t.Setenv(EnvDatabaseURL, testDatabaseURL)
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 
 	if cfg.HTTPAddr != DefaultHTTPAddr {
 		t.Errorf("HTTPAddr = %q, want default %q", cfg.HTTPAddr, DefaultHTTPAddr)
+	}
+}
+
+func TestLoadRequiresDatabaseURL(t *testing.T) {
+	t.Setenv(EnvDatabaseURL, "")
+
+	_, err := Load()
+	if !errors.Is(err, ErrMissingDatabaseURL) {
+		t.Fatalf("error = %v, want %v", err, ErrMissingDatabaseURL)
+	}
+}
+
+func TestLoadRejectsMalformedDatabaseURL(t *testing.T) {
+	tests := []string{
+		"not a url",
+		"mysql://user:pass@localhost/db",
+		"postgres://",
+	}
+
+	for _, raw := range tests {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv(EnvDatabaseURL, raw)
+
+			_, err := Load()
+			if !errors.Is(err, ErrInvalidDatabaseURL) {
+				t.Fatalf("error = %v, want %v", err, ErrInvalidDatabaseURL)
+			}
+		})
+	}
+}
+
+func TestLoadAcceptsKeywordDSN(t *testing.T) {
+	t.Setenv(EnvDatabaseURL, "host=localhost port=5432 dbname=reusery")
+
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load: %v", err)
 	}
 }
 
