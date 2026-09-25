@@ -1,0 +1,64 @@
+id: process/bounded-subprocess/v1
+primitive_id: process/bounded-subprocess
+version: "1"
+summary: Safely execute a subprocess without unbounded output or lifetime.
+
+requirements:
+  - id: starts-requested-program
+    kind: behavior
+    required: true
+    description: Starts the requested executable with the supplied arguments.
+
+  - id: preserves-exit-status
+    kind: behavior
+    required: true
+    description: Reports successful and unsuccessful process termination without conflating non-zero exit with launch failure.
+
+  - id: drains-stdout-stderr-concurrently
+    kind: invariant
+    required: true
+    description: Drains stdout and stderr without a read-order deadlock when either pipe fills.
+
+  - id: bounds-stdout
+    kind: resource
+    required: true
+    description: Captured stdout cannot grow beyond the configured bound.
+
+  - id: bounds-stderr
+    kind: resource
+    required: true
+    description: Captured stderr cannot grow beyond the configured bound.
+
+  - id: reports-truncation
+    kind: behavior
+    required: true
+    description: Reports when captured stdout or stderr was truncated by a configured bound.
+
+  - id: supports-timeout
+    kind: lifecycle
+    required: true
+    description: A configured deadline terminates or initiates termination of the running process.
+
+  - id: supports-cancellation
+    kind: lifecycle
+    required: true
+    description: Caller cancellation terminates or initiates termination of the running process.
+
+  - id: process-tree-semantics-explicit
+    kind: platform
+    required: true
+    description: Process-tree termination behaviour is explicit per supported platform rather than implied.
+
+  - id: no-orphaned-pipe-readers
+    kind: lifecycle
+    required: true
+    description: Completion does not leave internal pipe-reading workers blocked indefinitely.
+
+  - id: result-distinguishes-failure-kinds
+    kind: error-model
+    required: true
+    description: Result distinguishes launch failure, process exit, timeout, cancellation, and internal runner failure.
+
+notes:
+  - Identical process-tree semantics may not be portable across operating systems.
+  - A specimen must not receive credit for process-tree termination unless verified for the claimed platform.
