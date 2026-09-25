@@ -1,0 +1,255 @@
+# DEVELOPMENT FIXTURE EVIDENCE.
+#
+# Every record is deterministic development fixture evidence, NOT external
+# verification, NOT production use, NOT popularity or security assurance.
+# Fixed timestamps are used on purpose. Real public discovery arrives in a
+# later packet.
+#
+# The partial fixture carries one required FAIL (bounds-stderr) and one
+# required UNKNOWN (process-tree-semantics-explicit), so it must be rejected.
+# The complete fixture carries PASS for every required requirement, so it is
+# selectable.
+evidence:
+  # --- fixture/process/bounded-subprocess/partial-adapt ---
+  - id: fixture/partial-adapt/starts-requested-program
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: starts the requested program with the supplied arguments"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: starts-requested-program
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/preserves-exit-status
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: reports successful and unsuccessful termination distinctly"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: preserves-exit-status
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/drains-stdout-stderr-concurrently
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: drains stdout and stderr concurrently"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: drains-stdout-stderr-concurrently
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/bounds-stdout
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: captured stdout cannot exceed the configured bound"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: bounds-stdout
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/bounds-stderr
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: captured stderr has no bound and can grow without limit"
+    result: fail
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: bounds-stderr
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/reports-truncation
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: reports truncation when captured output is bounded"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: reports-truncation
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/supports-timeout
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: a configured deadline terminates the process"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: supports-timeout
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/supports-cancellation
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: caller cancellation terminates the process"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: supports-cancellation
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/process-tree-semantics-explicit
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: process-tree termination behaviour on each platform is unverified"
+    result: unknown
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: process-tree-semantics-explicit
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/no-orphaned-pipe-readers
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: completion leaves no blocked pipe-reading workers"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: no-orphaned-pipe-readers
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/partial-adapt/result-distinguishes-failure-kinds
+    subject_id: fixture/process/bounded-subprocess/partial-adapt
+    kind: development-fixture
+    claim: "fixture: result distinguishes launch, exit, timeout and cancellation"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: result-distinguishes-failure-kinds
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  # --- fixture/process/bounded-subprocess/complete-dependency ---
+  - id: fixture/complete-dependency/starts-requested-program
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: starts the requested program with the supplied arguments"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: starts-requested-program
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/preserves-exit-status
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: reports successful and unsuccessful termination distinctly"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: preserves-exit-status
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/drains-stdout-stderr-concurrently
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: drains stdout and stderr concurrently"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: drains-stdout-stderr-concurrently
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/bounds-stdout
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: captured stdout cannot exceed the configured bound"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: bounds-stdout
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/bounds-stderr
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: captured stderr cannot exceed the configured bound"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: bounds-stderr
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/reports-truncation
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: reports truncation when captured output is bounded"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: reports-truncation
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/supports-timeout
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: a configured deadline terminates the process"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: supports-timeout
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/supports-cancellation
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: caller cancellation terminates the process"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: supports-cancellation
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/process-tree-semantics-explicit
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: process-tree termination behaviour is explicit per platform"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: process-tree-semantics-explicit
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/no-orphaned-pipe-readers
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: completion leaves no blocked pipe-reading workers"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: no-orphaned-pipe-readers
+    methodology: "deterministic development fixture evidence; not external verification"
+
+  - id: fixture/complete-dependency/result-distinguishes-failure-kinds
+    subject_id: fixture/process/bounded-subprocess/complete-dependency
+    kind: development-fixture
+    claim: "fixture: result distinguishes launch, exit, timeout and cancellation"
+    result: pass
+    source:
+      path: catalogue/dev/bounded-subprocess/evidence.yaml
+    observed_at: "2026-01-01T00:00:00Z"
+    applies_to: result-distinguishes-failure-kinds
+    methodology: "deterministic development fixture evidence; not external verification"

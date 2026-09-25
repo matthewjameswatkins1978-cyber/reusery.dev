@@ -21,12 +21,12 @@ function Invoke-Step {
 }
 
 # Format first (idempotent write), so later steps always see formatted code.
-Invoke-Step 'gofmt -l -w .'
+Invoke-Step 'gofmt -s -l -w .'
 Invoke-Step 'sqlc generate'
 Invoke-Step 'git diff --exit-code -- internal/store/postgres/sqlc'
 Invoke-Step 'go vet ./...'
 Invoke-Step 'go test ./...'
-Invoke-Step 'go test -tags=integration ./internal/store/postgres/...'
+Invoke-Step 'go test -tags=integration ./...'
 Invoke-Step 'golangci-lint run ./...'
 Invoke-Step 'govulncheck ./...'
 Invoke-Step 'go build ./cmd/reusery'

@@ -1,0 +1,20 @@
+# DEVELOPMENT FIXTURES. Deterministic candidates for the Packet 4 vertical
+# slice. They are NOT claims about real public software, NOT popularity or
+# production evidence, and NOT recommendations. Real public discovery arrives
+# in a later packet.
+specimens:
+  - id: fixture/process/bounded-subprocess/partial-adapt
+    primitive_id: process/bounded-subprocess
+    name: "Development fixture: partial bounded subprocess (adapt)"
+    source:
+      path: catalogue/dev/bounded-subprocess/specimens.yaml
+    reuse_modes:
+      - adapt
+
+  - id: fixture/process/bounded-subprocess/complete-dependency
+    primitive_id: process/bounded-subprocess
+    name: "Development fixture: complete bounded subprocess (dependency)"
+    source:
+      path: catalogue/dev/bounded-subprocess/specimens.yaml
+    reuse_modes:
+      - dependency

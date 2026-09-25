@@ -3,6 +3,11 @@ INSERT INTO evidence (id, subject_id, kind, claim, result, source_url, source_re
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
+-- name: GetEvidence :one
+SELECT *
+FROM evidence
+WHERE id = $1;
+
 -- name: ListEvidenceBySubject :many
 SELECT *
 FROM evidence

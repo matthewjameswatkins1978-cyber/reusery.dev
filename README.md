@@ -17,9 +17,11 @@ The registry is memory. The resolver is the product.
 ## Status
 
 Early design and implementation. The repository currently holds the
-engineering foundation and persistence floor: a production-shaped Go HTTP
-server with structured logging and health endpoints, a deterministic evidence
-evaluator, and PostgreSQL-backed storage for the core domain model. See
+engineering foundation, persistence floor and the first complete resolution
+slice: a production-shaped Go HTTP server with structured logging and health
+endpoints, a deterministic evidence evaluator and resolver kernel,
+PostgreSQL-backed storage for the core domain model, and a CLI that can seed a
+catalogue, resolve a structured request and inspect the stored decision. See
 [VISION.md](VISION.md), [MODEL.md](MODEL.md), and [RESOLVER.md](RESOLVER.md)
 for the product design, and [docs/engineering.md](docs/engineering.md) for
 foundation decisions.
@@ -59,6 +61,35 @@ Migrations are applied explicitly, never automatically on HTTP startup:
 goose -dir internal/store/postgres/migrations postgres "$REUSERY_DATABASE_URL" up
 ```
 
+## First resolution workflow
+
+The end-to-end slice, from a clean database to an inspected decision:
+
+```powershell
+# 1. migrations
+goose -dir internal/store/postgres/migrations postgres "$REUSERY_DATABASE_URL" up
+
+# 2. seed the development catalogue
+go run ./cmd/reusery seed --root . --manifest catalogue/dev/bounded-subprocess/manifest.yaml
+
+# 3. resolve the example request (partial candidate first, complete second)
+go run ./cmd/reusery resolve --request examples/resolve-bounded-subprocess.json --format text
+
+# 4. inspect the stored resolution
+go run ./cmd/reusery resolution --id 1 --format json
+
+# 5. the BUILD LOCALLY example
+go run ./cmd/reusery resolve --request examples/resolve-bounded-subprocess-build-local.json --format json
+```
+
+Expected outcomes: step 3 returns `depend` (the partial fixture is rejected,
+the complete dependency fixture is selected) and step 5 returns
+`build_locally`. Both resolutions are persisted and survive restarts.
+
+> The development catalogue candidates are deterministic **fixtures**. They are
+> NOT recommendations about real public software. Real public discovery arrives
+> in a later packet.
+
 ## Testing
 
 ```powershell
@@ -69,7 +100,7 @@ Integration tests need Docker and use a real ephemeral PostgreSQL via
 Testcontainers:
 
 ```powershell
-go test -tags=integration ./internal/store/postgres/...
+go test -tags=integration ./...
 ```
 
 ## Full project check
@@ -113,8 +144,12 @@ scripts    developer automation
 - `internal/server` — HTTP server construction, routes and lifecycle.
 - `internal/version` — build metadata (linker-flag injectable).
 - `internal/model` — core domain model (Primitive, Contract, Specimen, Evidence, Resolution).
-- `internal/resolver` — deterministic evidence evaluation per contract requirement
-  (see [docs/evidence-evaluation.md](docs/evidence-evaluation.md)).
+- `internal/resolver` — deterministic evidence evaluation and the resolution
+  kernel (see [docs/evidence-evaluation.md](docs/evidence-evaluation.md) and
+  [docs/resolver-kernel.md](docs/resolver-kernel.md)).
+- `internal/catalog` — strict repository-authored YAML catalogue loading and
+  seeding.
+- `internal/cli` — the `reusery` commands (serve, seed, resolve, resolution).
 - `internal/store/postgres` — PostgreSQL persistence (pgx pool, Goose
   migrations, hand-written sqlc mapping layer).
 
@@ -122,6 +157,8 @@ Source-shaped project assets live outside Go:
 
 - `primitives/` — primitive definitions.
 - `contracts/` — behavioural contract definitions.
+- `catalogue/` — development seed bundles (fixtures, not recommendations).
+- `examples/` — example resolve requests.
 
 ## Tooling
 

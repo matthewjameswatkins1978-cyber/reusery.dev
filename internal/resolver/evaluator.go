@@ -68,16 +68,8 @@ func Evaluate(contract model.Contract, specimen model.Specimen, evidence []model
 	if contract.ID == "" {
 		return CandidateEvaluation{}, ErrEmptyContractID
 	}
-
-	seen := make(map[string]struct{}, len(contract.Requirements))
-	for _, req := range contract.Requirements {
-		if req.ID == "" {
-			return CandidateEvaluation{}, ErrEmptyRequirementID
-		}
-		if _, duplicate := seen[req.ID]; duplicate {
-			return CandidateEvaluation{}, fmt.Errorf("%w: %q", ErrDuplicateRequirementID, req.ID)
-		}
-		seen[req.ID] = struct{}{}
+	if err := validateContract(contract); err != nil {
+		return CandidateEvaluation{}, err
 	}
 
 	evaluation := CandidateEvaluation{
@@ -93,6 +85,23 @@ func Evaluate(contract model.Contract, specimen model.Specimen, evidence []model
 		})
 	}
 	return evaluation, nil
+}
+
+// validateContract rejects malformed contracts before any evaluation happens.
+// The kernel shares it so a malformed contract can never manufacture a
+// decision.
+func validateContract(contract model.Contract) error {
+	seen := make(map[string]struct{}, len(contract.Requirements))
+	for _, req := range contract.Requirements {
+		if req.ID == "" {
+			return ErrEmptyRequirementID
+		}
+		if _, duplicate := seen[req.ID]; duplicate {
+			return fmt.Errorf("%w: %q", ErrDuplicateRequirementID, req.ID)
+		}
+		seen[req.ID] = struct{}{}
+	}
+	return nil
 }
 
 // observation is one matching evidence item, kept in input order.

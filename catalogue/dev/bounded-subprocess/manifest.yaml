@@ -1,0 +1,11 @@
+# DEVELOPMENT-ONLY seed manifest for the bounded-subprocess vertical slice.
+#
+# It references the canonical repository files instead of duplicating them.
+# The specimens and evidence it points at are deterministic development
+# fixtures: they are NOT claims about real public software and NOT
+# recommendations. Real public discovery arrives in a later packet.
+schema_version: 1
+primitive_file: primitives/process/bounded-subprocess/primitive.yaml
+contract_file: contracts/process/bounded-subprocess-v1.yaml
+specimens_file: catalogue/dev/bounded-subprocess/specimens.yaml
+evidence_file: catalogue/dev/bounded-subprocess/evidence.yaml

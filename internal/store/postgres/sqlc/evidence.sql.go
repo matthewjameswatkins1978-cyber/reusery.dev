@@ -11,6 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getEvidence = `-- name: GetEvidence :one
+SELECT id, subject_id, kind, claim, result, source_url, source_revision, source_path, source_license, observed_at, applies_to, methodology, artifact
+FROM evidence
+WHERE id = $1
+`
+
+func (q *Queries) GetEvidence(ctx context.Context, id string) (Evidence, error) {
+	row := q.db.QueryRow(ctx, getEvidence, id)
+	var i Evidence
+	err := row.Scan(
+		&i.ID,
+		&i.SubjectID,
+		&i.Kind,
+		&i.Claim,
+		&i.Result,
+		&i.SourceUrl,
+		&i.SourceRevision,
+		&i.SourcePath,
+		&i.SourceLicense,
+		&i.ObservedAt,
+		&i.AppliesTo,
+		&i.Methodology,
+		&i.Artifact,
+	)
+	return i, err
+}
+
 const insertEvidence = `-- name: InsertEvidence :one
 INSERT INTO evidence (id, subject_id, kind, claim, result, source_url, source_revision, source_path, source_license, observed_at, applies_to, methodology, artifact)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)

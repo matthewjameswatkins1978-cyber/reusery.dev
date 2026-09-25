@@ -33,9 +33,11 @@ needed until a telemetry packet arrives.
 ## Why no other frameworks/dependencies
 
 Packet 1 had zero third-party requirements. Packet 3 adds the persistence
-stack only: `pgx`, `sqlc`, Goose and Testcontainers (test-only). Auth, Redis,
-queues, ORMs, search and telemetry still belong to later packets. Each future
-dependency must justify itself against the standard library first.
+stack only: `pgx`, `sqlc`, Goose and Testcontainers (test-only). Packet 4 adds
+`gopkg.in/yaml.v3` for strict catalogue loading — the maintained YAML parser,
+not a hand-rolled one, and deliberately kept out of `internal/model`. Auth,
+Redis, queues, ORMs, search and telemetry still belong to later packets. Each
+future dependency must justify itself against the standard library first.
 
 ## Configuration
 
@@ -134,21 +136,73 @@ Testcontainers with a pinned `postgres:18.6-alpine`. No SQLite, no mocks, no
 in-memory fake — the point is to test PostgreSQL. Run them with:
 
 ```powershell
-go test -tags=integration ./internal/store/postgres/...
+go test -tags=integration ./...
 ```
 
 Docker must be running. CI runs them on GitHub-hosted Linux runners, which
 have Docker available.
 
+## Resolver kernel and CLI (Packet 4)
+
+Three layers, kept deliberately separate:
+
+- **Pure kernel** (`internal/resolver/kernel.go`) — consumes domain values
+  only. No PostgreSQL, HTTP, filesystem, environment or CLI parsing. Candidates
+  are considered in supplied order; the first one satisfying every required
+  requirement is selected; otherwise BUILD LOCALLY. No scores, no ranking. See
+  [resolver-kernel.md](resolver-kernel.md).
+- **Application service** (`internal/resolver/service.go`) — loads through a
+  `resolver.Repository` interface defined outside PostgreSQL, takes the
+  timestamp from an injected `Clock` (deterministic tests), runs the kernel and
+  persists exactly one Resolution. Load or validation failures persist nothing.
+- **Adapters** — `internal/store/postgres`, `internal/cli`, `internal/catalog`.
+
+### Catalogue loading
+
+`internal/catalog` decodes repository-authored YAML into loader-local DTOs
+with `KnownFields(true)` (typos fail) and maps them into `internal/model`, so
+the domain model never learns what YAML is. Paths in a manifest must resolve
+beneath the repository root. Relationships are validated after decoding.
+
+Seeding upserts Primitive/Contract/Specimen but keeps Evidence append-only: an
+observation is inserted if new, skipped if identical, and rejected with
+`catalog.ErrEvidenceConflict` if the same ID carries different content. The
+server never seeds automatically; seeding requires an explicit CLI command.
+
+### Development fixtures
+
+`catalogue/dev/bounded-subprocess/` holds deterministic **development
+fixtures** (`fixture/.../partial-adapt` and `fixture/.../complete-dependency`).
+They are not claims about real public software and not recommendations — every
+evidence record says so in `Methodology` and points back at the repository
+fixture file in its `SourceRef`. Live discovery arrives in Packet 5.
+
+### CLI
+
+`internal/cli` owns command behaviour so `cmd/reusery/main.go` stays thin
+(signals + `cli.New().Run`). Standard library `flag`, no CLI framework.
+
+| Command | Purpose |
+| --- | --- |
+| `reusery` / `reusery serve` | start the HTTP server (no-argument behaviour preserved) |
+| `reusery seed --root . --manifest FILE` | load a catalogue seed bundle |
+| `reusery resolve --request FILE [--format text\|json]` | run a resolve request |
+| `reusery resolution --id N [--format text\|json]` | inspect a stored resolution |
+| `reusery help` | usage |
+
+Exit codes: `0` success, `1` execution failure, `2` usage error. JSON goes to
+stdout only; logs and errors go to stderr, so `--format json` output stays
+machine-readable.
+
 ## Quality checks
 
 ```powershell
-gofmt -l -w .            # formatting (write)
+gofmt -s -l -w .            # formatting (write)
 sqlc generate            # regenerate query code
 git diff --exit-code -- internal/store/postgres/sqlc   # drift check
 go vet ./...             # static analysis
 go test ./...            # unit tests
-go test -tags=integration ./internal/store/postgres/... # Docker required
+go test -tags=integration ./... # Docker required
 golangci-lint run ./...  # lint (config: .golangci.yml)
 govulncheck ./...        # vulnerability scan
 go build ./cmd/reusery   # build
@@ -179,7 +233,15 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   and malformed database URL rejection, level parsing.
 - `internal/server` — `/health` and `/ready` status codes, JSON bodies,
   content-type headers, and the failing-checker 503 path.
-- `internal/resolver` — deterministic evaluation semantics (Packet 2).
+- `internal/resolver` — deterministic evaluation semantics (Packet 2), the
+  resolution kernel and the application service (Packet 4).
+- `internal/catalog` — strict YAML loading, path-escape rejection, relationship
+  validation and idempotent seeding.
+- `internal/cli` — command parsing, output formats, exit codes, stdout/stderr
+  separation.
 - `internal/store/postgres` (`-tags=integration`) — migration up/down/up,
   round-trips for every domain object, requirement and rejection ordering,
   transaction rollback, readiness, and `persist → reload → resolver.Evaluate`.
+- `internal/cli` (`-tags=integration`) — the full vertical slice against real
+  PostgreSQL: migrate → seed → resolve → persist → inspect, for both `depend`
+  and `build_locally`.

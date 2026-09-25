@@ -112,6 +112,19 @@ func (s *Store) InsertEvidence(ctx context.Context, e model.Evidence) error {
 	return nil
 }
 
+// FindEvidence returns the observation with the given ID. The boolean reports
+// whether it exists; absence is not an error.
+func (s *Store) FindEvidence(ctx context.Context, id string) (model.Evidence, bool, error) {
+	row, err := s.queries.GetEvidence(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Evidence{}, false, nil
+	}
+	if err != nil {
+		return model.Evidence{}, false, fmt.Errorf("find evidence %q: %w", id, err)
+	}
+	return evidenceFromRow(row), true, nil
+}
+
 // ListEvidenceBySubject returns all evidence for a subject, oldest first.
 func (s *Store) ListEvidenceBySubject(ctx context.Context, subjectID string) ([]model.Evidence, error) {
 	rows, err := s.queries.ListEvidenceBySubject(ctx, subjectID)

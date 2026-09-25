@@ -10,7 +10,7 @@ SQLC_OUT := internal/store/postgres/sqlc
 .PHONY: format generate generate-check integration test vet lint vuln build run check clean
 
 format:
-	gofmt -l -w .
+	gofmt -s -l -w .
 
 # Regenerate sqlc code from migrations and queries.
 generate:
@@ -25,7 +25,7 @@ test:
 
 # Requires Docker; uses a real ephemeral PostgreSQL via Testcontainers.
 integration:
-	$(GO) test -tags=integration ./internal/store/postgres/...
+	$(GO) test -tags=integration ./...
 
 vet:
 	$(GO) vet ./...
