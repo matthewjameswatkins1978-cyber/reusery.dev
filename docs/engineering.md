@@ -35,9 +35,13 @@ needed until a telemetry packet arrives.
 Packet 1 had zero third-party requirements. Packet 3 adds the persistence
 stack only: `pgx`, `sqlc`, Goose and Testcontainers (test-only). Packet 4 adds
 `gopkg.in/yaml.v3` for strict catalogue loading — the maintained YAML parser,
-not a hand-rolled one, and deliberately kept out of `internal/model`. Auth,
-Redis, queues, ORMs, search and telemetry still belong to later packets. Each
-future dependency must justify itself against the standard library first.
+not a hand-rolled one, and deliberately kept out of `internal/model`. Packet 5
+adds **zero** dependencies: provider calls use `net/http`, `encoding/json` and
+the same YAML parser. No GitHub SDK — the three REST calls Packet 5 needs are
+trivially hand-written, and an SDK would add dependency and CVE surface for no
+benefit. Auth, Redis, queues, ORMs, search and telemetry still belong to later
+packets. Each future dependency must justify itself against the standard
+library first.
 
 ## Configuration
 
@@ -47,6 +51,7 @@ future dependency must justify itself against the standard library first.
 REUSERY_HTTP_ADDR=:8080             # default, optional
 REUSERY_LOG_LEVEL=info              # default, optional
 REUSERY_DATABASE_URL=postgres://... # REQUIRED (Packet 3 onwards)
+REUSERY_GITHUB_TOKEN=               # optional, discovery rate limits only
 ```
 
 No config framework: `os.Getenv` plus a small parser is sufficient.
@@ -59,6 +64,13 @@ mandatory and validated (postgres/postgresql URL or libpq keyword form), so
 startup fails clearly instead of falling back to an invented credential. The
 URL may contain a password, so it is never logged and never included in a
 config error message.
+
+`REUSERY_GITHUB_TOKEN` is optional and may legitimately be empty. It only
+raises GitHub's rate limits for `reusery discover`; GitHub's public
+unauthenticated endpoints work without it. It is never required to start
+`reusery serve`, never part of readiness, never logged, and never included in a
+configuration error — the token is only ever placed in an `Authorization`
+header, never in a URL.
 
 ## HTTP server
 
@@ -175,7 +187,9 @@ server never seeds automatically; seeding requires an explicit CLI command.
 fixtures** (`fixture/.../partial-adapt` and `fixture/.../complete-dependency`).
 They are not claims about real public software and not recommendations — every
 evidence record says so in `Methodology` and points back at the repository
-fixture file in its `SourceRef`. Live discovery arrives in Packet 5.
+fixture file in its `SourceRef`. They stay: they are the only behavioural
+evidence Reusery has, whereas live discovery output is deliberately not
+behavioural evidence at all.
 
 ### CLI
 
@@ -188,11 +202,71 @@ fixture file in its `SourceRef`. Live discovery arrives in Packet 5.
 | `reusery seed --root . --manifest FILE` | load a catalogue seed bundle |
 | `reusery resolve --request FILE [--format text\|json]` | run a resolve request |
 | `reusery resolution --id N [--format text\|json]` | inspect a stored resolution |
+| `reusery discover --profile FILE [--root DIR] [--format text\|json]` | run bounded public discovery |
 | `reusery help` | usage |
 
-Exit codes: `0` success, `1` execution failure, `2` usage error. JSON goes to
-stdout only; logs and errors go to stderr, so `--format json` output stays
-machine-readable.
+Exit codes: `0` success, `1` execution failure, `2` usage error — and for
+`discover`, a **profile problem** is a usage error while provider or
+persistence failure is an execution failure. JSON goes to stdout only; logs and
+errors go to stderr, so `--format json` output stays machine-readable.
+
+## Public discovery (Packet 5)
+
+Domain in `internal/discovery`, providers in `internal/discovery/providers/`,
+one bounded HTTP helper in `internal/discovery/httpx`. Full design notes live
+in [public-discovery.md](public-discovery.md); the decisions worth recording
+here are:
+
+- **Three providers, one interface.** `pkg.go.dev`,
+  `github-repositories` and `github-code` implement the same
+  `Provider` interface. Repository and code discovery share one GitHub client
+  but keep separate provider IDs because they produce different candidate
+  shapes. No provider micro-framework.
+- **Zero new dependencies.** `net/http` + `encoding/json` + the existing
+  `gopkg.in/yaml.v3`. No GitHub SDK: three REST calls do not need one.
+- **GitHub REST API version pin.** Every GitHub request sends
+  `X-GitHub-Api-Version: 2026-03-10` and `Accept: application/vnd.github+json`
+  so a server-side API change surfaces as a classified failure instead of a
+  silently different response shape.
+- **pkg.go.dev JSON API.** `/v1/search` and `/v1/package/{path}` only — HTML is
+  never scraped. Live testing showed `/v1beta` now issues a permanent redirect
+  to `/v1`, so the canonical paths are used directly and same-host redirects
+  are tolerated as a safety net.
+- **Provider budgets are fixed, not configurable.** 3 providers, 3 queries per
+  provider, 6 results per query, 20 HTTP requests per provider, 24 candidates
+  per run, 15s per provider, 2 MiB per response. Providers stop when a budget
+  is spent and report `budget_exhausted` with `incomplete: true`.
+- **Base URLs are code-owned constants.** There is no configuration for a
+  provider base URL; that would be an SSRF-shaped feature. Tests inject
+  `httptest` URLs through provider constructors. Redirects are followed only
+  inside the fixed base host.
+- **External network policy.** The public internet is reachable only from
+  manual, human-run smoke tests. **CI never calls live GitHub or pkg.go.dev** —
+  provider tests use `httptest`, and the PostgreSQL integration test wires
+  `httptest` providers to real PostgreSQL. A provider outage therefore cannot
+  make CI red.
+- **Provider-generated evidence trust rule.** Provider evidence may be `info`
+  or `unknown`, always leaves `AppliesTo` empty, and is checked by a defensive
+  validation pass before anything is persisted. It can never be `pass`/`fail`
+  for a behavioural contract requirement. Search relevance is not behavioural
+  verification, and provider ordering is not Reusery ranking.
+
+### Manual live smoke procedure
+
+Run before freezing any packet that touches discovery:
+
+```powershell
+# migrate + seed first (see the workflows in README.md)
+go run ./cmd/reusery discover --root . `
+  --profile discovery/process/bounded-subprocess-v1.yaml --format text
+```
+
+Inspect the returned candidates for plausibility — an HTTP 200 is not the
+point — then repeat with `--format json`. Run once without
+`REUSERY_GITHUB_TOKEN` to confirm unauthenticated GitHub code search is
+classified as `authentication` while the other providers still succeed, and
+once with a token to confirm all three providers run. Never put a token in
+shell history, logs, screenshots or reports.
 
 ## Quality checks
 
@@ -229,8 +303,6 @@ go build ./cmd/reusery   # build
 
 Standard `testing` only. Coverage is behavioural, not numeric:
 
-- `internal/config` — defaults, env overrides, blank-value handling, missing
-  and malformed database URL rejection, level parsing.
 - `internal/server` — `/health` and `/ready` status codes, JSON bodies,
   content-type headers, and the failing-checker 503 path.
 - `internal/resolver` — deterministic evaluation semantics (Packet 2), the
@@ -238,10 +310,25 @@ Standard `testing` only. Coverage is behavioural, not numeric:
 - `internal/catalog` — strict YAML loading, path-escape rejection, relationship
   validation and idempotent seeding.
 - `internal/cli` — command parsing, output formats, exit codes, stdout/stderr
-  separation.
+  separation, and `discover` with injected discovery behaviour (no network).
+- `internal/config` — defaults, env overrides, blank-value handling, missing
+  and malformed database URL rejection, level parsing, and the optional GitHub
+  token never leaking into errors.
+- `internal/discovery` — profile loading and structural validation, evidence
+  ID stability, defensive candidate validation, merge/ordering/budget
+  semantics, append-only persistence, and partial provider failure.
+- `internal/discovery/httpx` — bounded GET behaviour: cancellation, size
+  ceiling, content-type handling, safe status errors, base-host-only redirect
+  policy, credential-free URLs.
+- `internal/discovery/providers/*` — `httptest` fixture tests for response
+  mapping, stable specimen IDs, exact version preservation, licence unknowns,
+  deduplication, request/result budgets, rate-limit and auth classification,
+  and proof that no provider can emit behavioural evidence.
 - `internal/store/postgres` (`-tags=integration`) — migration up/down/up,
   round-trips for every domain object, requirement and rejection ordering,
   transaction rollback, readiness, and `persist → reload → resolver.Evaluate`.
 - `internal/cli` (`-tags=integration`) — the full vertical slice against real
   PostgreSQL: migrate → seed → resolve → persist → inspect, for both `depend`
-  and `build_locally`.
+  and `build_locally`; plus public discovery against real PostgreSQL with
+  `httptest` providers, including the assertion that persisted provider
+  evidence leaves every required requirement `unknown`.

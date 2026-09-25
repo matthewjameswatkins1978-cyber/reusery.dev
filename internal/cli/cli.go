@@ -8,15 +8,20 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/catalog"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/config"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/github"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/pkggodev"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/server"
@@ -37,6 +42,12 @@ type Store interface {
 	catalog.Store
 }
 
+// Discoverer runs bounded public discovery for one profile. Tests inject a
+// fake so CLI unit tests never touch the network.
+type Discoverer interface {
+	Discover(context.Context, discovery.Profile) (discovery.Result, error)
+}
+
 // App is the command-line application. Production wiring lives in New; tests
 // construct an App directly and inject fakes.
 type App struct {
@@ -49,23 +60,40 @@ type App struct {
 	OpenStore func(ctx context.Context, cfg config.Config) (Store, func(), error)
 	// LoadBundle reads a catalogue manifest relative to a repository root.
 	LoadBundle func(root, manifest string) (catalog.Bundle, error)
+	// LoadProfile reads a discovery profile relative to a repository root.
+	LoadProfile func(root, profile string) (discovery.Profile, error)
+	// NewDiscoverer builds the discovery runner for one command invocation.
+	NewDiscoverer func(store Store, cfg config.Config, clock discovery.Clock) Discoverer
 	// Serve runs the HTTP server until ctx is cancelled.
 	Serve func(ctx context.Context, cfg config.Config, logger *slog.Logger) error
-	// Clock supplies resolution timestamps.
+	// Clock supplies resolution and discovery timestamps.
 	Clock resolver.Clock
 }
 
 // New returns the production command-line application.
 func New() *App {
 	return &App{
-		Stdout:     os.Stdout,
-		Stderr:     os.Stderr,
-		LoadConfig: config.Load,
-		OpenStore:  openPostgresStore,
-		LoadBundle: catalog.Load,
-		Serve:      serveHTTP,
-		Clock:      time.Now,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
+		LoadConfig:    config.Load,
+		OpenStore:     openPostgresStore,
+		LoadBundle:    catalog.Load,
+		LoadProfile:   discovery.LoadProfile,
+		NewDiscoverer: newPublicDiscoverer,
+		Serve:         serveHTTP,
+		Clock:         time.Now,
 	}
+}
+
+// newPublicDiscoverer wires the real Packet 5 providers. The GitHub token is
+// optional: without it GitHub's public unauthenticated limits apply.
+func newPublicDiscoverer(store Store, cfg config.Config, clock discovery.Clock) Discoverer {
+	client := github.NewClient(cfg.GitHubToken)
+	return discovery.NewService(store, clock, []discovery.Provider{
+		pkggodev.New(),
+		github.NewRepositoryProvider(client),
+		github.NewCodeProvider(client),
+	})
 }
 
 // Run executes one command and returns the process exit code.
@@ -84,6 +112,8 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.commandResolve(ctx, args[1:])
 	case "resolution":
 		return a.commandResolution(ctx, args[1:])
+	case "discover":
+		return a.commandDiscover(ctx, args[1:])
 	case "help", "-h", "--help":
 		a.usage(a.Stdout)
 		return ExitOK
@@ -136,7 +166,7 @@ func (a *App) commandSeed(ctx context.Context, args []string) int {
 		return ExitError
 	}
 
-	store, closeStore, code := a.openStore(ctx)
+	store, _, closeStore, code := a.openStore(ctx)
 	if code != ExitOK {
 		return code
 	}
@@ -187,7 +217,7 @@ func (a *App) commandResolve(ctx context.Context, args []string) int {
 		return ExitError
 	}
 
-	store, closeStore, code := a.openStore(ctx)
+	store, _, closeStore, code := a.openStore(ctx)
 	if code != ExitOK {
 		return code
 	}
@@ -232,7 +262,7 @@ func (a *App) commandResolution(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	store, closeStore, code := a.openStore(ctx)
+	store, _, closeStore, code := a.openStore(ctx)
 	if code != ExitOK {
 		return code
 	}
@@ -260,18 +290,151 @@ func (a *App) commandResolution(ctx context.Context, args []string) int {
 	return ExitOK
 }
 
-func (a *App) openStore(ctx context.Context) (Store, func(), int) {
+// commandDiscover runs one bounded public discovery pass.
+//
+// It deliberately does NOT run resolver.Resolve, does not persist a
+// Resolution, never chooses a winner and never claims BUILD LOCALLY:
+// discovery produces plausible candidates and INFO/UNKNOWN observations only.
+func (a *App) commandDiscover(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("discover", flag.ContinueOnError)
+	flags.SetOutput(a.Stderr)
+	root := flags.String("root", ".", "repository root directory")
+	profilePath := flags.String("profile", "", "path to the discovery profile, relative to root")
+	format := flags.String("format", "text", "output format: text or json")
+	if err := flags.Parse(args); err != nil {
+		return ExitUsage
+	}
+	if *profilePath == "" {
+		a.errorf("reusery discover: --profile is required")
+		return ExitUsage
+	}
+	if !validFormat(*format) {
+		a.errorf("reusery discover: invalid --format %q (want text or json)", *format)
+		return ExitUsage
+	}
+
+	profile, err := a.LoadProfile(*root, *profilePath)
+	if err != nil {
+		a.errorf("reusery discover: %v", err)
+		if errors.Is(err, discovery.ErrProfile) {
+			return ExitUsage
+		}
+		return ExitError
+	}
+
+	store, cfg, closeStore, code := a.openStore(ctx)
+	if code != ExitOK {
+		return code
+	}
+	defer closeStore()
+
+	result, runErr := a.NewDiscoverer(store, cfg, discovery.Clock(a.Clock)).Discover(ctx, profile)
+	if runErr != nil && errors.Is(runErr, discovery.ErrProfile) {
+		a.errorf("reusery discover: %v", runErr)
+		return ExitUsage
+	}
+
+	// Provider reports stay inspectable even when the run as a whole failed.
+	failure := runErr != nil && len(result.Providers) > 0
+	if runErr != nil && !failure {
+		a.errorf("reusery discover: %v", runErr)
+		return ExitError
+	}
+
+	if *format == "json" {
+		encoder := json.NewEncoder(a.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			a.errorf("reusery discover: write output: %v", err)
+			return ExitError
+		}
+	} else {
+		a.writeDiscoverText(result)
+	}
+
+	if failure {
+		a.errorf("reusery discover: %v", runErr)
+		return ExitError
+	}
+	a.errOut("discovered %d candidate(s) across %d provider(s)\n",
+		len(result.Candidates), len(result.Providers))
+	return ExitOK
+}
+
+func (a *App) writeDiscoverText(result discovery.Result) {
+	a.out("primitive: %s\n", result.PrimitiveID)
+	a.out("contract: %s\n", result.ContractID)
+	a.out("observed_at: %s\n", result.ObservedAt.Format(time.RFC3339))
+
+	a.out("providers:\n")
+	for _, report := range result.Providers {
+		status := "ok"
+		if !report.Succeeded {
+			status = "failed"
+		}
+		a.out("  %s (%s, requests=%d, candidates=%d, incomplete=%t)\n",
+			report.ID, status, report.Requests, report.CandidateCount, report.Incomplete)
+		for _, issue := range report.Issues {
+			a.out("    - %s: %s\n", issue.Kind, issue.Message)
+			if issue.Query != "" {
+				a.out("      query: %s\n", issue.Query)
+			}
+			if issue.StatusCode != 0 {
+				a.out("      status: %d\n", issue.StatusCode)
+			}
+			if issue.RetryAfter != "" {
+				a.out("      retry-after: %s\n", issue.RetryAfter)
+			}
+		}
+	}
+
+	if len(result.Candidates) == 0 {
+		a.out("candidates: (none)\n")
+		return
+	}
+	a.out("candidates:\n")
+	for _, candidate := range result.Candidates {
+		a.out("  %s\n", candidate.Specimen.ID)
+		a.out("    provider: %s\n", candidate.ProviderID)
+		a.out("    name: %s\n", candidate.Specimen.Name)
+		a.out("    reuse_modes: %s\n", joinReuseModes(candidate.Specimen.ReuseMode))
+		a.out("    url: %s\n", candidate.Specimen.Source.URL)
+		if candidate.Specimen.Source.Revision != "" {
+			a.out("    revision: %s\n", candidate.Specimen.Source.Revision)
+		}
+		if candidate.Specimen.Source.Path != "" {
+			a.out("    path: %s\n", candidate.Specimen.Source.Path)
+		}
+		if candidate.Specimen.Source.License != "" {
+			a.out("    license: %s\n", candidate.Specimen.Source.License)
+		}
+		a.out("    evidence:\n")
+		for _, evidence := range candidate.Evidence {
+			a.out("      - %s %s: %s\n", evidence.Result, evidence.Kind, evidence.Claim)
+		}
+	}
+}
+
+func joinReuseModes(modes []model.ReuseMode) string {
+	parts := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		parts = append(parts, string(mode))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (a *App) openStore(ctx context.Context) (Store, config.Config, func(), int) {
 	cfg, err := a.LoadConfig()
 	if err != nil {
 		a.errorf("reusery: invalid configuration: %v", err)
-		return nil, nil, ExitError
+		return nil, config.Config{}, nil, ExitError
 	}
 	store, closeStore, err := a.OpenStore(ctx, cfg)
 	if err != nil {
 		a.errorf("reusery: cannot open store: %v", err)
-		return nil, nil, ExitError
+		return nil, config.Config{}, nil, ExitError
 	}
-	return store, closeStore, ExitOK
+	return store, cfg, closeStore, ExitOK
 }
 
 func (a *App) writeResolveText(id int64, decision resolver.Decision) {
@@ -337,11 +500,13 @@ func (a *App) writeList(label string, values []string) {
 func (a *App) usage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `reusery — engineering reuse and verification
 
-Usage:
+	Usage:
   reusery serve                                      start the HTTP server (default)
   reusery seed --root DIR --manifest FILE            load a catalogue seed bundle
   reusery resolve --request FILE [--format text|json]  run a resolve request
   reusery resolution --id N [--format text|json]     inspect a stored resolution
+  reusery discover --profile FILE [--root DIR] [--format text|json]
+                                                     run bounded public discovery
   reusery help                                       show this help
 `)
 }

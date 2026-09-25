@@ -1,0 +1,39 @@
+# Public discovery profile for the bounded-subprocess primitive.
+#
+# Discovery produces PLAUSIBLE CANDIDATES and attributable INFO/UNKNOWN
+# observations. It does not decide that any candidate satisfies the behavioural
+# contract, and provider search order is not Reusery ranking.
+#
+# Query wording was tuned against live pkg.go.dev and GitHub results to
+# genuinely describe the bounded-subprocess problem. No specific public
+# project is hard-coded.
+schema_version: 1
+
+primitive_id: process/bounded-subprocess
+contract_id: process/bounded-subprocess/v1
+
+providers:
+  - id: pkg.go.dev
+    queries:
+      - text: subprocess cancellation
+        limit: 4
+      - text: bounded output pipe
+        limit: 4
+      - text: process command execution
+        limit: 4
+
+  - id: github-repositories
+    queries:
+      - text: subprocess runner language:go
+        limit: 4
+      - text: exec command cancellation language:go
+        limit: 4
+      - text: subprocess language:go
+        limit: 4
+
+  - id: github-code
+    queries:
+      - text: exec.CommandContext StdoutPipe StderrPipe language:go
+        limit: 4
+      - text: SysProcAttr Setpgid language:go
+        limit: 4

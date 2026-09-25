@@ -21,6 +21,7 @@ const (
 	EnvHTTPAddr    = "REUSERY_HTTP_ADDR"
 	EnvLogLevel    = "REUSERY_LOG_LEVEL"
 	EnvDatabaseURL = "REUSERY_DATABASE_URL"
+	EnvGitHubToken = "REUSERY_GITHUB_TOKEN"
 )
 
 // Configuration errors. The database URL itself is never included, because it
@@ -38,10 +39,16 @@ type Config struct {
 	LogLevel slog.Level
 	// DatabaseURL is the PostgreSQL connection string.
 	DatabaseURL string
+	// GitHubToken is an OPTIONAL bearer token for GitHub's public API. It
+	// raises rate limits when present; public unauthenticated discovery works
+	// without it. Readiness never depends on it, it is never logged and it is
+	// never included in a configuration error.
+	GitHubToken string
 }
 
 // Load reads configuration from the environment, falling back to defaults.
-// The database URL is required and validated; it is never logged.
+// The database URL is required and validated; it is never logged. The GitHub
+// token is optional and may legitimately be empty.
 func Load() (Config, error) {
 	databaseURL := strings.TrimSpace(os.Getenv(EnvDatabaseURL))
 	if databaseURL == "" {
@@ -54,6 +61,7 @@ func Load() (Config, error) {
 		HTTPAddr:    envOr(EnvHTTPAddr, DefaultHTTPAddr),
 		LogLevel:    ParseLogLevel(os.Getenv(EnvLogLevel)),
 		DatabaseURL: databaseURL,
+		GitHubToken: strings.TrimSpace(os.Getenv(EnvGitHubToken)),
 	}, nil
 }
 

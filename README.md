@@ -17,11 +17,13 @@ The registry is memory. The resolver is the product.
 ## Status
 
 Early design and implementation. The repository currently holds the
-engineering foundation, persistence floor and the first complete resolution
-slice: a production-shaped Go HTTP server with structured logging and health
-endpoints, a deterministic evidence evaluator and resolver kernel,
-PostgreSQL-backed storage for the core domain model, and a CLI that can seed a
-catalogue, resolve a structured request and inspect the stored decision. See
+engineering foundation, persistence floor, the first complete resolution
+slice, and the first public discovery layer: a production-shaped Go HTTP
+server with structured logging and health endpoints, a deterministic evidence
+evaluator and resolver kernel, PostgreSQL-backed storage for the core domain
+model, a CLI that can seed a catalogue, resolve a structured request and
+inspect the stored decision, plus `reusery discover`, which queries real public
+provider APIs (pkg.go.dev, GitHub) for plausible candidates. See
 [VISION.md](VISION.md), [MODEL.md](MODEL.md), and [RESOLVER.md](RESOLVER.md)
 for the product design, and [docs/engineering.md](docs/engineering.md) for
 foundation decisions.
@@ -48,10 +50,13 @@ Configuration via environment (see `.env.example`):
 REUSERY_HTTP_ADDR=:8080
 REUSERY_LOG_LEVEL=info
 REUSERY_DATABASE_URL=postgres://reusery:reusery@localhost:5432/reusery?sslmode=disable
+REUSERY_GITHUB_TOKEN=            # optional, for GitHub discovery rate limits
 ```
 
 `REUSERY_DATABASE_URL` is required and never logged. Startup fails clearly if
-it is missing, malformed or unreachable.
+it is missing, malformed or unreachable. `REUSERY_GITHUB_TOKEN` is optional and
+only raises GitHub's rate limits for discovery; discovery works without it and
+the token is never logged or persisted.
 
 ### Database migrations
 
@@ -87,8 +92,44 @@ the complete dependency fixture is selected) and step 5 returns
 `build_locally`. Both resolutions are persisted and survive restarts.
 
 > The development catalogue candidates are deterministic **fixtures**. They are
-> NOT recommendations about real public software. Real public discovery arrives
-> in a later packet.
+> NOT recommendations about real public software — they are behavioural
+> evidence for tests. The live public discovery workflow below is a different
+> thing: it finds *plausible* real-world candidates and deliberately supplies
+> no behavioural evidence.
+
+## Public discovery workflow
+
+Discovery queries real public provider APIs for the same primitive, within
+explicit time, request, response-size and result budgets:
+
+```powershell
+# 1. migrations + seed (same as above)
+
+# 2. discover, human-readable
+go run ./cmd/reusery discover --root . `
+  --profile discovery/process/bounded-subprocess-v1.yaml --format text
+
+# 3. discover, machine-readable
+go run ./cmd/reusery discover --root . `
+  --profile discovery/process/bounded-subprocess-v1.yaml --format json
+```
+
+Expected: provider reports for `pkg.go.dev`, `github-repositories` and
+`github-code`, plus plausible package/repository/source candidates stored in
+PostgreSQL with attributable `INFO`/`UNKNOWN` observations.
+
+Two things to keep straight:
+
+- **`seed`** loads deterministic development fixtures so tests are stable.
+- **`discover`** talks to the public internet and stores plausible candidates.
+
+Discovery never resolves: it does not pick a winner, does not persist a
+`Resolution` and cannot turn provider metadata into a satisfied contract
+requirement. See [docs/public-discovery.md](docs/public-discovery.md).
+
+> Automated tests never call the public internet — provider tests use local
+> `httptest` fixtures, so a provider outage cannot make CI red. Live calls are
+> a manual smoke procedure.
 
 ## Testing
 
@@ -149,7 +190,11 @@ scripts    developer automation
   [docs/resolver-kernel.md](docs/resolver-kernel.md)).
 - `internal/catalog` — strict repository-authored YAML catalogue loading and
   seeding.
-- `internal/cli` — the `reusery` commands (serve, seed, resolve, resolution).
+- `internal/discovery` — bounded public discovery: profiles, budgets, provider
+  interface, evidence rules and persistence (see
+  [docs/public-discovery.md](docs/public-discovery.md)).
+- `internal/cli` — the `reusery` commands (serve, seed, resolve, resolution,
+  discover).
 - `internal/store/postgres` — PostgreSQL persistence (pgx pool, Goose
   migrations, hand-written sqlc mapping layer).
 
@@ -158,6 +203,7 @@ Source-shaped project assets live outside Go:
 - `primitives/` — primitive definitions.
 - `contracts/` — behavioural contract definitions.
 - `catalogue/` — development seed bundles (fixtures, not recommendations).
+- `discovery/` — public discovery profiles.
 - `examples/` — example resolve requests.
 
 ## Tooling

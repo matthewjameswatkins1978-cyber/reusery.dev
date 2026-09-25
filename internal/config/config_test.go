@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -120,4 +121,45 @@ func TestParseLogLevel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGitHubTokenIsOptionalAndNeverLeaked(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		t.Setenv(EnvDatabaseURL, testDatabaseURL)
+		t.Setenv(EnvGitHubToken, "")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.GitHubToken != "" {
+			t.Errorf("GitHubToken = %q, want empty for public discovery", cfg.GitHubToken)
+		}
+	})
+
+	t.Run("present and trimmed", func(t *testing.T) {
+		t.Setenv(EnvDatabaseURL, testDatabaseURL)
+		t.Setenv(EnvGitHubToken, "  ghp_example_token  ")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.GitHubToken != "ghp_example_token" {
+			t.Errorf("GitHubToken = %q, want the trimmed token", cfg.GitHubToken)
+		}
+	})
+
+	t.Run("never appears in configuration errors", func(t *testing.T) {
+		t.Setenv(EnvDatabaseURL, "mysql://nope")
+		t.Setenv(EnvGitHubToken, "ghp_example_token")
+
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load succeeded, want a malformed database URL error")
+		}
+		if strings.Contains(err.Error(), "ghp_example_token") {
+			t.Errorf("configuration error leaked the token: %q", err)
+		}
+	})
 }

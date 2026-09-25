@@ -15,6 +15,7 @@ import (
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/catalog"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/config"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 )
@@ -22,7 +23,70 @@ import (
 const (
 	repoRoot    = "../.."
 	manifestRel = "catalogue/dev/bounded-subprocess/manifest.yaml"
+	profileRel  = "discovery/process/bounded-subprocess-v1.yaml"
 )
+
+// fakeDiscoverer is the discovery double: CLI tests never touch the network.
+type fakeDiscoverer struct {
+	result  discovery.Result
+	err     error
+	calls   int
+	profile discovery.Profile
+}
+
+func (f *fakeDiscoverer) Discover(_ context.Context, profile discovery.Profile) (discovery.Result, error) {
+	f.calls++
+	f.profile = profile
+	return f.result, f.err
+}
+
+// sampleDiscoveryResult is what a successful fake discovery run reports.
+func sampleDiscoveryResult() discovery.Result {
+	observedAt := time.Date(2026, time.September, 25, 12, 0, 0, 0, time.UTC)
+	specimen := model.Specimen{
+		ID:          "public/pkg.go.dev/github.com%2Fexample%2Fsubproc@v1.0.0",
+		PrimitiveID: "process/bounded-subprocess",
+		Name:        "github.com/example/subproc",
+		Source:      model.SourceRef{URL: "https://pkg.go.dev/github.com/example/subproc", Revision: "v1.0.0", Path: "github.com/example/subproc"},
+		ReuseMode:   []model.ReuseMode{model.ReuseDependency},
+	}
+	return discovery.Result{
+		PrimitiveID: "process/bounded-subprocess",
+		ContractID:  "process/bounded-subprocess/v1",
+		ObservedAt:  observedAt,
+		Candidates: []discovery.Candidate{{
+			ProviderID: discovery.ProviderPkgGoDev,
+			Specimen:   specimen,
+			Evidence: []model.Evidence{discovery.NewObservation(discovery.ObservationSpec{
+				ProviderID:  discovery.ProviderPkgGoDev,
+				SubjectID:   specimen.ID,
+				Kind:        "discovery_match",
+				Claim:       `pkg.go.dev matched package "github.com/example/subproc"`,
+				Result:      model.EvidenceInfo,
+				Source:      model.SourceRef{URL: specimen.Source.URL, Revision: specimen.Source.Revision, Path: specimen.Source.Path},
+				ObservedAt:  observedAt,
+				Methodology: discovery.MethodologyPkgGoDev,
+				Artifact:    "query=subprocess cancellation",
+			}), discovery.NewObservation(discovery.ObservationSpec{
+				ProviderID:  discovery.ProviderPkgGoDev,
+				SubjectID:   specimen.ID,
+				Kind:        "source_license",
+				Claim:       `pkg.go.dev returned no unambiguous licence for package "github.com/example/subproc"`,
+				Result:      model.EvidenceUnknown,
+				Source:      model.SourceRef{URL: specimen.Source.URL, Revision: specimen.Source.Revision, Path: specimen.Source.Path},
+				ObservedAt:  observedAt,
+				Methodology: discovery.MethodologyPkgGoDev,
+				Artifact:    "endpoint=/v1/package/github.com/example/subproc",
+			})},
+		}},
+		Providers: []discovery.ProviderReport{
+			{ID: discovery.ProviderPkgGoDev, Succeeded: true, Requests: 4, CandidateCount: 1},
+			{ID: discovery.ProviderGitHubRepositories, Succeeded: false, Requests: 3, Issues: []discovery.ProviderIssue{
+				{Kind: discovery.IssueRateLimited, Provider: discovery.ProviderGitHubRepositories, StatusCode: 429, Message: "GitHub responded HTTP 429"},
+			}},
+		},
+	}
+}
 
 // fakeStore is an in-memory Store for CLI tests: no PostgreSQL required.
 type fakeStore struct {
@@ -153,7 +217,11 @@ func testApp(t *testing.T) (*App, *bytes.Buffer, *bytes.Buffer, *fakeStore) {
 		OpenStore: func(context.Context, config.Config) (Store, func(), error) {
 			return store, func() {}, nil
 		},
-		LoadBundle: catalog.Load,
+		LoadBundle:  catalog.Load,
+		LoadProfile: discovery.LoadProfile,
+		NewDiscoverer: func(Store, config.Config, discovery.Clock) Discoverer {
+			return &fakeDiscoverer{result: sampleDiscoveryResult()}
+		},
 		Serve: func(context.Context, config.Config, *slog.Logger) error {
 			return nil
 		},
@@ -454,5 +522,229 @@ func TestServeCommand(t *testing.T) {
 	}
 	if !served {
 		t.Error("serve command did not start the server")
+	}
+}
+
+func TestDiscoverRequiresProfile(t *testing.T) {
+	app, stdout, stderr, _ := testApp(t)
+
+	if code := app.Run(context.Background(), []string{"discover"}); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", code, ExitUsage)
+	}
+	if !strings.Contains(stderr.String(), "--profile is required") {
+		t.Errorf("stderr = %q, want a missing-flag message", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestDiscoverRejectsInvalidFormat(t *testing.T) {
+	app, _, stderr, _ := testApp(t)
+
+	args := []string{"discover", "--root", repoRoot, "--profile", filepath.FromSlash(profileRel), "--format", "yaml"}
+	if code := app.Run(context.Background(), args); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d", code, ExitUsage)
+	}
+	if !strings.Contains(stderr.String(), "invalid --format") {
+		t.Errorf("stderr = %q, want an invalid-format message", stderr.String())
+	}
+}
+
+func TestDiscoverRejectsStructuralProfileProblems(t *testing.T) {
+	root := t.TempDir()
+	badProfile := filepath.Join(root, "profile.yaml")
+	body := strings.Join([]string{
+		"schema_version: 1",
+		"primitive_id: process/bounded-subprocess",
+		"contract_id: process/bounded-subprocess/v1",
+		"providers:",
+		"  - id: sourcegraph",
+		"    queries:",
+		"      - text: q",
+		"        limit: 1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(badProfile, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app, stdout, stderr, _ := testApp(t)
+	args := []string{"discover", "--root", root, "--profile", "profile.yaml"}
+	if code := app.Run(context.Background(), args); code != ExitUsage {
+		t.Fatalf("exit = %d, want %d (a profile problem is a usage problem)", code, ExitUsage)
+	}
+	if !strings.Contains(stderr.String(), "unknown provider") {
+		t.Errorf("stderr = %q, want the structural reason", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestDiscoverJSONOutput(t *testing.T) {
+	app, stdout, stderr, store := testApp(t)
+	runner := &fakeDiscoverer{result: sampleDiscoveryResult()}
+	app.NewDiscoverer = func(Store, config.Config, discovery.Clock) Discoverer { return runner }
+
+	args := []string{"discover", "--root", repoRoot, "--profile", filepath.FromSlash(profileRel), "--format", "json"}
+	if code := app.Run(context.Background(), args); code != ExitOK {
+		t.Fatalf("exit = %d, want %d; stderr=%q", code, ExitOK, stderr.String())
+	}
+
+	var out discovery.Result
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.PrimitiveID != "process/bounded-subprocess" || out.ContractID != "process/bounded-subprocess/v1" {
+		t.Errorf("result = %#v", out)
+	}
+	if len(out.Candidates) != 1 || len(out.Providers) != 2 {
+		t.Fatalf("candidates = %d providers = %d", len(out.Candidates), len(out.Providers))
+	}
+	if out.Providers[0].ID != discovery.ProviderPkgGoDev || !out.Providers[0].Succeeded {
+		t.Errorf("provider report = %#v", out.Providers[0])
+	}
+	if out.Providers[1].Succeeded || out.Providers[1].Issues[0].Kind != discovery.IssueRateLimited {
+		t.Errorf("partial failure report = %#v", out.Providers[1])
+	}
+	if runner.calls != 1 {
+		t.Errorf("discoverer calls = %d, want 1", runner.calls)
+	}
+	if runner.profile.PrimitiveID != "process/bounded-subprocess" {
+		t.Errorf("profile passed to discoverer = %#v", runner.profile)
+	}
+	if !strings.Contains(stderr.String(), "discovered 1 candidate") {
+		t.Errorf("stderr = %q, want a progress summary", stderr.String())
+	}
+	// Discovery never resolves: no Resolution may exist.
+	if len(store.resolutions) != 0 {
+		t.Errorf("discovery stored %d resolutions, want 0", len(store.resolutions))
+	}
+}
+
+func TestDiscoverTextOutput(t *testing.T) {
+	app, stdout, stderr, _ := testApp(t)
+	app.NewDiscoverer = func(Store, config.Config, discovery.Clock) Discoverer {
+		return &fakeDiscoverer{result: sampleDiscoveryResult()}
+	}
+
+	args := []string{"discover", "--root", repoRoot, "--profile", filepath.FromSlash(profileRel), "--format", "text"}
+	if code := app.Run(context.Background(), args); code != ExitOK {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"primitive: process/bounded-subprocess",
+		"contract: process/bounded-subprocess/v1",
+		"observed_at: 2026-09-25T12:00:00Z",
+		"pkg.go.dev (ok, requests=4, candidates=1, incomplete=false)",
+		"github-repositories (failed, requests=3, candidates=0, incomplete=false)",
+		"rate_limited: GitHub responded HTTP 429",
+		"public/pkg.go.dev/github.com%2Fexample%2Fsubproc@v1.0.0",
+		"reuse_modes: dependency",
+		"url: https://pkg.go.dev/github.com/example/subproc",
+		"revision: v1.0.0",
+		"info discovery_match:",
+		"unknown source_license:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text output missing %q:\n%s", want, out)
+		}
+	}
+	for _, forbidden := range []string{"score", "confidence", "winner", "best candidate", "rank"} {
+		if strings.Contains(strings.ToLower(out), forbidden) {
+			t.Errorf("text output must not mention %q:\n%s", forbidden, out)
+		}
+	}
+}
+
+func TestDiscoverEmptyResultIsSuccess(t *testing.T) {
+	app, stdout, stderr, _ := testApp(t)
+	app.NewDiscoverer = func(Store, config.Config, discovery.Clock) Discoverer {
+		return &fakeDiscoverer{result: discovery.Result{
+			PrimitiveID: "process/bounded-subprocess",
+			ContractID:  "process/bounded-subprocess/v1",
+			Candidates:  []discovery.Candidate{},
+			Providers:   []discovery.ProviderReport{{ID: discovery.ProviderPkgGoDev, Succeeded: true}},
+		}}
+	}
+
+	args := []string{"discover", "--root", repoRoot, "--profile", filepath.FromSlash(profileRel)}
+	if code := app.Run(context.Background(), args); code != ExitOK {
+		t.Fatalf("exit = %d, want %d (empty discovery is a success)", code, ExitOK)
+	}
+	if !strings.Contains(stdout.String(), "candidates: (none)") {
+		t.Errorf("stdout = %q, want an empty candidate list", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "discovered 0 candidate") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+func TestDiscoverAllProvidersFailedIsExecutionFailure(t *testing.T) {
+	app, stdout, stderr, _ := testApp(t)
+	result := sampleDiscoveryResult()
+	result.Candidates = []discovery.Candidate{}
+	for i := range result.Providers {
+		result.Providers[i].Succeeded = false
+		result.Providers[i].Issues = []discovery.ProviderIssue{
+			{Kind: discovery.IssueUnavailable, Provider: result.Providers[i].ID, Message: "network is down"},
+		}
+	}
+	app.NewDiscoverer = func(Store, config.Config, discovery.Clock) Discoverer {
+		return &fakeDiscoverer{result: result, err: &discovery.ProvidersFailedError{Providers: []string{
+			discovery.ProviderPkgGoDev, discovery.ProviderGitHubRepositories,
+		}}}
+	}
+
+	args := []string{"discover", "--root", repoRoot, "--profile", filepath.FromSlash(profileRel), "--format", "json"}
+	if code := app.Run(context.Background(), args); code != ExitError {
+		t.Fatalf("exit = %d, want %d", code, ExitError)
+	}
+	// The reports must stay inspectable even though the run failed.
+	var out discovery.Result
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if len(out.Providers) != 2 {
+		t.Errorf("provider reports = %d, want both inspectable", len(out.Providers))
+	}
+	if !strings.Contains(stderr.String(), "all providers failed operationally") {
+		t.Errorf("stderr = %q, want the execution failure", stderr.String())
+	}
+}
+
+func TestDiscoverExecutionFailureProducesNoOutput(t *testing.T) {
+	app, stdout, stderr, _ := testApp(t)
+	app.NewDiscoverer = func(Store, config.Config, discovery.Clock) Discoverer {
+		return &fakeDiscoverer{err: errors.New("insert evidence: database is down")}
+	}
+
+	args := []string{"discover", "--root", repoRoot, "--profile", filepath.FromSlash(profileRel), "--format", "json"}
+	if code := app.Run(context.Background(), args); code != ExitError {
+		t.Fatalf("exit = %d, want %d", code, ExitError)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want no success output on failure", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "database is down") {
+		t.Errorf("stderr = %q, want the failure", stderr.String())
+	}
+}
+
+func TestDiscoverReportsConfigurationFailures(t *testing.T) {
+	app, _, stderr, _ := testApp(t)
+	app.LoadConfig = func() (config.Config, error) {
+		return config.Config{}, errors.New("REUSERY_DATABASE_URL is required")
+	}
+
+	args := []string{"discover", "--root", repoRoot, "--profile", filepath.FromSlash(profileRel)}
+	if code := app.Run(context.Background(), args); code != ExitError {
+		t.Fatalf("exit = %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(stderr.String(), "invalid configuration") {
+		t.Errorf("stderr = %q, want a configuration failure", stderr.String())
 	}
 }

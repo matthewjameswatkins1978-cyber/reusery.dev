@@ -17,6 +17,7 @@ import (
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/catalog"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/config"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store/postgres"
 )
@@ -80,7 +81,9 @@ func newApp(t *testing.T, pool *pgxpool.Pool, databaseURL string) (*App, *bytes.
 			// The pool is shared and closed by the test, not by a command.
 			return postgres.NewStore(pool), func() {}, nil
 		},
-		LoadBundle: catalog.Load,
+		LoadBundle:    catalog.Load,
+		LoadProfile:   discovery.LoadProfile,
+		NewDiscoverer: newPublicDiscoverer,
 		Serve: func(context.Context, config.Config, *slog.Logger) error {
 			return nil
 		},
