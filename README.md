@@ -86,6 +86,8 @@ scripts    developer automation
 - `internal/server` — HTTP server construction, routes and lifecycle.
 - `internal/version` — build metadata (linker-flag injectable).
 - `internal/model` — core domain model (Primitive, Contract, Specimen, Evidence, Resolution).
+- `internal/resolver` — deterministic evidence evaluation per contract requirement
+  (see [docs/evidence-evaluation.md](docs/evidence-evaluation.md)).
 
 Source-shaped project assets live outside Go:
 
