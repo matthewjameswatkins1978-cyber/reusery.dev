@@ -1,0 +1,11 @@
+id: process/bounded-subprocess
+name: Bounded subprocess execution
+description: >
+  Execute a child process while bounding captured output and execution lifetime,
+  preserving stdout/stderr separation and providing explicit cancellation semantics.
+tags:
+  - process
+  - subprocess
+  - cancellation
+  - bounded-output
+contract_id: process/bounded-subprocess/v1
