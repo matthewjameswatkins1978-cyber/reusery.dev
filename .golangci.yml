@@ -1,0 +1,12 @@
+# golangci-lint configuration (v2 format). Kept deliberately small for Packet 1.
+version: "2"
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+formatters:
+  enable:
+    - gofmt

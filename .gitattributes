@@ -1,0 +1,2 @@
+# Normalise Go source files to LF so checks behave the same on Windows and Linux.
+*.go text eol=lf
