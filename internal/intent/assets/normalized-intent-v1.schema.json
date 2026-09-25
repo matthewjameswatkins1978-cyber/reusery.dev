@@ -1,0 +1,104 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ready", "needs_clarification", "unsupported"],
+      "description": "Normalisation verdict. needs_clarification when a material ambiguity could change the contract; unsupported when the input is not an engineering selection, reuse or resolution request."
+    },
+    "capability": {
+      "type": "string",
+      "description": "Short normalised engineering capability in plain words. Empty only when no capability is identifiable."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One or two sentences restating what the user asked for. Empty only when status is unsupported."
+    },
+    "requested_artifact_level": {
+      "type": "string",
+      "enum": ["unspecified", "code", "package", "library", "framework", "cross_level"],
+      "description": "The artefact level the user's own words imply. It is not a recommendation or a resolver verdict."
+    },
+    "requirements": {
+      "type": "array",
+      "description": "Ordered, independently inspectable behavioural claims. Empty when status is unsupported.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "One independently inspectable claim, stated concretely."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["behavior", "invariant", "resource", "lifecycle", "platform", "error-model", "compatibility", "integration", "policy", "other"],
+            "description": "The nature of the claim."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "True for obligations the request states; false for preferences."
+          }
+        },
+        "required": ["description", "kind", "required"]
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Explicit project or user limits that the request actually states.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["language", "runtime", "platform", "license", "dependency", "framework", "performance", "deployment", "compatibility", "integration", "security", "resource", "other"],
+            "description": "The kind of limit."
+          },
+          "description": {
+            "type": "string",
+            "description": "The limit in the user's terms."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "True for hard limits; false for stated preferences."
+          }
+        },
+        "required": ["kind", "description", "required"]
+      }
+    },
+    "ambiguities": {
+      "type": "array",
+      "description": "Material open questions whose answers could substantially change the contract. Empty for ready and unsupported.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "A specific question the user must answer."
+          },
+          "why_it_matters": {
+            "type": "string",
+            "description": "Why the answer materially changes the contract or the solution search."
+          }
+        },
+        "required": ["question", "why_it_matters"]
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "description": "Small, reversible interpretation choices only. Material uncertainty belongs in ambiguities.",
+      "items": {
+        "type": "string",
+        "description": "One explicit assumption."
+      }
+    },
+    "unsupported_reason": {
+      "type": "string",
+      "description": "Required only when status is unsupported; otherwise empty."
+    }
+  },
+  "required": ["status", "capability", "summary", "requested_artifact_level", "requirements", "constraints", "ambiguities", "assumptions", "unsupported_reason"]
+}

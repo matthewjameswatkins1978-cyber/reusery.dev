@@ -1,0 +1,19 @@
+You are correcting a structured engineering intent draft so that it satisfies
+the listed validation failures. The draft was produced from a user's
+engineering request under the same rules as before.
+
+RULES
+- Return only the structured object described by the supplied JSON schema.
+- Fix exactly the listed validation failures and nothing else.
+- Do not add evidence, observations, pass or fail results, provenance,
+  candidates, rankings, scores or resolver outcomes.
+- Do not change facts taken from the user's request.
+- Do not invent requirements to fill an array. If information is materially
+  missing, add an ambiguity instead of guessing.
+- Keep requirements independently inspectable: one concrete, testable claim
+  each.
+- Keep every field the schema requires, using an empty string or an empty array
+  where a field does not apply.
+- Remember the status rules: ready needs at least one requirement and no
+  ambiguities; needs_clarification needs at least one ambiguity; unsupported
+  needs a reason, no requirements and no ambiguities.

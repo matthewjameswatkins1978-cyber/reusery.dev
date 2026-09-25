@@ -18,17 +18,30 @@ const (
 
 // Environment variable names.
 const (
-	EnvHTTPAddr    = "REUSERY_HTTP_ADDR"
-	EnvLogLevel    = "REUSERY_LOG_LEVEL"
-	EnvDatabaseURL = "REUSERY_DATABASE_URL"
-	EnvGitHubToken = "REUSERY_GITHUB_TOKEN"
+	EnvHTTPAddr     = "REUSERY_HTTP_ADDR"
+	EnvLogLevel     = "REUSERY_LOG_LEVEL"
+	EnvDatabaseURL  = "REUSERY_DATABASE_URL"
+	EnvGitHubToken  = "REUSERY_GITHUB_TOKEN"
+	EnvOpenAIAPIKey = "REUSERY_OPENAI_API_KEY"
+	EnvOpenAIModel  = "REUSERY_OPENAI_MODEL"
 )
+
+// DefaultOpenAIModel is the Packet 6 default model for intent normalisation.
+// Intent normalisation is bounded structured work and Reusery has a
+// first-class cost-saving objective, so the default is deliberately not the
+// strongest available model. An explicit override exists for evaluation and
+// future tuning.
+const DefaultOpenAIModel = "gpt-5.6-luna"
 
 // Configuration errors. The database URL itself is never included, because it
 // may contain credentials.
 var (
 	ErrMissingDatabaseURL = errors.New("config: REUSERY_DATABASE_URL is required")
 	ErrInvalidDatabaseURL = errors.New("config: REUSERY_DATABASE_URL is malformed")
+	// ErrMissingOpenAIAPIKey reports a model-backed command invoked without a
+	// key. Only model-backed commands need it: serve, seed, discover, resolve
+	// and resolution keep working with no model key at all.
+	ErrMissingOpenAIAPIKey = errors.New("config: REUSERY_OPENAI_API_KEY is required for model-backed commands")
 )
 
 // Config holds the runtime configuration for the application.
@@ -63,6 +76,46 @@ func Load() (Config, error) {
 		DatabaseURL: databaseURL,
 		GitHubToken: strings.TrimSpace(os.Getenv(EnvGitHubToken)),
 	}, nil
+}
+
+// ModelConfig is model-provider configuration only.
+//
+// It is deliberately separate from Config: natural-language structuring and
+// the database are independent concerns, so `reusery normalize` and
+// `reusery normalize-eval` work with no PostgreSQL configured at all.
+type ModelConfig struct {
+	// OpenAIAPIKey is the bearer token for the OpenAI API. It is optional
+	// globally, required only by commands that actually invoke OpenAI. It is
+	// never logged, never persisted and never included in an error.
+	OpenAIAPIKey string
+	// OpenAIModel overrides the default model. Empty means the default.
+	OpenAIModel string
+}
+
+// LoadModel reads model-provider configuration from the environment. It never
+// consults the database URL, so it succeeds where Load would not.
+func LoadModel() (ModelConfig, error) {
+	return ModelConfig{
+		OpenAIAPIKey: strings.TrimSpace(os.Getenv(EnvOpenAIAPIKey)),
+		OpenAIModel:  strings.TrimSpace(os.Getenv(EnvOpenAIModel)),
+	}, nil
+}
+
+// Model returns the resolved model name, falling back to the Packet 6 default.
+func (m ModelConfig) Model() string {
+	if m.OpenAIModel != "" {
+		return m.OpenAIModel
+	}
+	return DefaultOpenAIModel
+}
+
+// RequireAPIKey returns the trimmed key or a clear configuration error that
+// never contains the key.
+func (m ModelConfig) RequireAPIKey() (string, error) {
+	if m.OpenAIAPIKey == "" {
+		return "", ErrMissingOpenAIAPIKey
+	}
+	return m.OpenAIAPIKey, nil
 }
 
 // validateDatabaseURL rejects obviously malformed values so startup can fail

@@ -22,6 +22,8 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/github"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/pkggodev"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent/providers/openai"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/server"
@@ -48,6 +50,12 @@ type Discoverer interface {
 	Discover(context.Context, discovery.Profile) (discovery.Result, error)
 }
 
+// Normalizer turns raw engineering intent into a structured result. Tests
+// inject a fake so CLI unit tests never make a paid model call.
+type Normalizer interface {
+	Normalize(context.Context, string) (intent.Result, error)
+}
+
 // App is the command-line application. Production wiring lives in New; tests
 // construct an App directly and inject fakes.
 type App struct {
@@ -56,14 +64,22 @@ type App struct {
 
 	// LoadConfig reads configuration (defaults to config.Load).
 	LoadConfig func() (config.Config, error)
+	// LoadModelConfig reads model-provider configuration. It deliberately
+	// does not require PostgreSQL, so `normalize` runs without a database.
+	LoadModelConfig func() (config.ModelConfig, error)
 	// OpenStore opens the store and returns a cleanup function.
 	OpenStore func(ctx context.Context, cfg config.Config) (Store, func(), error)
 	// LoadBundle reads a catalogue manifest relative to a repository root.
 	LoadBundle func(root, manifest string) (catalog.Bundle, error)
 	// LoadProfile reads a discovery profile relative to a repository root.
 	LoadProfile func(root, profile string) (discovery.Profile, error)
+	// LoadCorpus reads an intent evaluation corpus.
+	LoadCorpus func(path string) (intent.Corpus, error)
 	// NewDiscoverer builds the discovery runner for one command invocation.
 	NewDiscoverer func(store Store, cfg config.Config, clock discovery.Clock) Discoverer
+	// NewNormalizer builds the normalisation runner for one command
+	// invocation. It fails only on configuration problems.
+	NewNormalizer func(cfg config.ModelConfig) (Normalizer, error)
 	// Serve runs the HTTP server until ctx is cancelled.
 	Serve func(ctx context.Context, cfg config.Config, logger *slog.Logger) error
 	// Clock supplies resolution and discovery timestamps.
@@ -73,16 +89,34 @@ type App struct {
 // New returns the production command-line application.
 func New() *App {
 	return &App{
-		Stdout:        os.Stdout,
-		Stderr:        os.Stderr,
-		LoadConfig:    config.Load,
-		OpenStore:     openPostgresStore,
-		LoadBundle:    catalog.Load,
-		LoadProfile:   discovery.LoadProfile,
-		NewDiscoverer: newPublicDiscoverer,
-		Serve:         serveHTTP,
-		Clock:         time.Now,
+		Stdout:          os.Stdout,
+		Stderr:          os.Stderr,
+		LoadConfig:      config.Load,
+		LoadModelConfig: config.LoadModel,
+		OpenStore:       openPostgresStore,
+		LoadBundle:      catalog.Load,
+		LoadProfile:     discovery.LoadProfile,
+		LoadCorpus:      intent.LoadCorpus,
+		NewDiscoverer:   newPublicDiscoverer,
+		NewNormalizer:   newOpenAINormalizer,
+		Serve:           serveHTTP,
+		Clock:           time.Now,
 	}
+}
+
+// newOpenAINormalizer wires the single Packet 6 model adapter. The API key is
+// required only here: serve, seed, discover, resolve and resolution never
+// construct a normaliser.
+func newOpenAINormalizer(cfg config.ModelConfig) (Normalizer, error) {
+	key, err := cfg.RequireAPIKey()
+	if err != nil {
+		return nil, err
+	}
+	provider, err := openai.New(key, cfg.Model())
+	if err != nil {
+		return nil, err
+	}
+	return intent.NewNormalizer(provider), nil
 }
 
 // newPublicDiscoverer wires the real Packet 5 providers. The GitHub token is
@@ -114,6 +148,10 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.commandResolution(ctx, args[1:])
 	case "discover":
 		return a.commandDiscover(ctx, args[1:])
+	case "normalize":
+		return a.commandNormalize(ctx, args[1:])
+	case "normalize-eval":
+		return a.commandNormalizeEval(ctx, args[1:])
 	case "help", "-h", "--help":
 		a.usage(a.Stdout)
 		return ExitOK
@@ -423,6 +461,262 @@ func joinReuseModes(modes []model.ReuseMode) string {
 	return strings.Join(parts, ",")
 }
 
+// commandNormalize turns ordinary engineering language into an inspectable
+// provisional contract draft.
+//
+// It deliberately does NOT open PostgreSQL, does NOT run discovery and does
+// NOT call the resolver: normalisation structures the question, it does not
+// answer it. Exactly one of --text or --file is required, and the whole
+// normalisation costs at most two paid model calls.
+func (a *App) commandNormalize(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("normalize", flag.ContinueOnError)
+	flags.SetOutput(a.Stderr)
+	text := flags.String("text", "", "engineering intent expressed in ordinary language")
+	file := flags.String("file", "", "path to a file containing the engineering intent")
+	format := flags.String("format", "text", "output format: text or json")
+	if err := flags.Parse(args); err != nil {
+		return ExitUsage
+	}
+
+	if (*text == "") == (*file == "") {
+		a.errorf("reusery normalize: exactly one of --text or --file is required")
+		return ExitUsage
+	}
+	if !validFormat(*format) {
+		a.errorf("reusery normalize: invalid --format %q (want text or json)", *format)
+		return ExitUsage
+	}
+
+	raw := *text
+	if *file != "" {
+		data, err := os.ReadFile(*file)
+		if err != nil {
+			a.errorf("reusery normalize: cannot read %s: %v", *file, err)
+			return ExitUsage
+		}
+		raw = string(data)
+	}
+
+	cfg, err := a.LoadModelConfig()
+	if err != nil {
+		a.errorf("reusery normalize: %v", err)
+		return ExitError
+	}
+	normalizer, err := a.NewNormalizer(cfg)
+	if err != nil {
+		a.errorf("reusery normalize: %v", err)
+		return ExitError
+	}
+
+	result, err := normalizer.Normalize(ctx, raw)
+	if err != nil {
+		a.errorf("reusery normalize: %v", err)
+		if errors.Is(err, intent.ErrInvalidInput) {
+			return ExitUsage
+		}
+		return ExitError
+	}
+
+	if *format == "json" {
+		encoder := json.NewEncoder(a.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			a.errorf("reusery normalize: write output: %v", err)
+			return ExitError
+		}
+		return ExitOK
+	}
+
+	a.writeNormalizeText(result)
+	return ExitOK
+}
+
+// commandNormalizeEval runs the deterministic evaluation corpus. It performs
+// paid model calls on purpose and says so before starting. A corpus problem is
+// a usage error; a provider failure or an unmet acceptance gate is an
+// execution failure.
+func (a *App) commandNormalizeEval(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("normalize-eval", flag.ContinueOnError)
+	flags.SetOutput(a.Stderr)
+	corpusPath := flags.String("corpus", "", "path to an evaluation corpus YAML file")
+	format := flags.String("format", "text", "output format: text or json")
+	if err := flags.Parse(args); err != nil {
+		return ExitUsage
+	}
+	if *corpusPath == "" {
+		a.errorf("reusery normalize-eval: --corpus is required")
+		return ExitUsage
+	}
+	if !validFormat(*format) {
+		a.errorf("reusery normalize-eval: invalid --format %q (want text or json)", *format)
+		return ExitUsage
+	}
+
+	corpus, err := a.LoadCorpus(*corpusPath)
+	if err != nil {
+		a.errorf("reusery normalize-eval: %v", err)
+		return ExitUsage
+	}
+
+	cfg, err := a.LoadModelConfig()
+	if err != nil {
+		a.errorf("reusery normalize-eval: %v", err)
+		return ExitError
+	}
+	normalizer, err := a.NewNormalizer(cfg)
+	if err != nil {
+		a.errorf("reusery normalize-eval: %v", err)
+		return ExitError
+	}
+
+	a.errOut("reusery normalize-eval performs paid model calls: %d corpus case(s)\n",
+		len(corpus.Cases))
+
+	report, err := intent.RunCorpus(ctx, normalizer, corpus)
+	report.Corpus = *corpusPath
+	if err != nil {
+		a.errorf("reusery normalize-eval: %v", err)
+		return ExitError
+	}
+
+	if *format == "json" {
+		encoder := json.NewEncoder(a.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(report); err != nil {
+			a.errorf("reusery normalize-eval: write output: %v", err)
+			return ExitError
+		}
+	} else {
+		a.writeEvalText(report)
+	}
+
+	if !report.Gates.Met() {
+		for _, failure := range report.Gates.Failures() {
+			a.errorf("reusery normalize-eval: gate failed: %s", failure)
+		}
+		return ExitError
+	}
+	a.errOut("all acceptance gates met (%d/%d cases, %d repair(s))\n",
+		report.Passed, report.Cases, report.Repairs)
+	return ExitOK
+}
+
+func (a *App) writeNormalizeText(result intent.Result) {
+	a.out("status: %s\n", result.Status)
+	a.out("capability: %s\n", result.Capability)
+	a.out("summary: %s\n", result.Summary)
+	a.out("requested_artifact_level: %s\n", result.RequestedArtifactLevel)
+	if result.Status == intent.StatusUnsupported {
+		a.out("unsupported_reason: %s\n", result.UnsupportedReason)
+	}
+	if result.Primitive != nil && result.Contract != nil {
+		a.out("primitive: %s\n", result.Primitive.ID)
+		a.out("contract: %s (version %s)\n", result.Contract.ID, result.Contract.Version)
+	}
+
+	if result.Contract != nil {
+		a.out("requirements:\n")
+		for _, requirement := range result.Contract.Requirements {
+			requirementKind := "optional"
+			if requirement.Required {
+				requirementKind = "required"
+			}
+			a.out("  %s [%s] %s: %s\n",
+				requirement.ID, requirement.Kind, requirementKind, requirement.Description)
+		}
+	}
+
+	if len(result.Constraints) > 0 {
+		a.out("constraints:\n")
+		for _, constraint := range result.Constraints {
+			requirementKind := "optional"
+			if constraint.Required {
+				requirementKind = "required"
+			}
+			a.out("  [%s] %s: %s\n", constraint.Kind, requirementKind, constraint.Description)
+		}
+	}
+
+	if len(result.Assumptions) > 0 {
+		a.out("assumptions:\n")
+		for _, assumption := range result.Assumptions {
+			a.out("  - %s\n", assumption)
+		}
+	}
+
+	if len(result.Ambiguities) > 0 {
+		a.out("ambiguities:\n")
+		for _, ambiguity := range result.Ambiguities {
+			a.out("  - %s\n", ambiguity.Question)
+			a.out("    why: %s\n", ambiguity.WhyItMatters)
+		}
+	}
+
+	metadata := result.Metadata
+	a.out("generation:\n")
+	a.out("  provider: %s\n", metadata.Provider)
+	a.out("  model: %s\n", metadata.Model)
+	a.out("  response_id: %s\n", metadata.ResponseID)
+	a.out("  prompt_version: %s\n", metadata.PromptVersion)
+	a.out("  schema_version: %d\n", metadata.SchemaVersion)
+	a.out("  model_calls: %d\n", metadata.Calls)
+	a.out("  repaired: %t\n", metadata.Repaired)
+	a.out("  tokens: input=%d output=%d reasoning=%d total=%d\n",
+		metadata.Usage.InputTokens, metadata.Usage.OutputTokens,
+		metadata.Usage.ReasoningTokens, metadata.Usage.TotalTokens)
+}
+
+func (a *App) writeEvalText(report intent.Report) {
+	a.out("corpus: %s\n", report.Corpus)
+	a.out("provider: %s\n", report.Provider)
+	a.out("model: %s\n", report.Model)
+	a.out("cases: %d\n", report.Cases)
+	a.out("passed: %d\n", report.Passed)
+	a.out("failed: %d\n", report.Failed)
+	a.out("repairs: %d (%.1f%%)\n", report.Repairs, report.Gates.RepairRate*100)
+	a.out("usage: input=%d output=%d reasoning=%d total=%d\n",
+		report.Usage.InputTokens, report.Usage.OutputTokens,
+		report.Usage.ReasoningTokens, report.Usage.TotalTokens)
+	a.out("gates:\n")
+	a.out("  structurally_valid: %s\n", gateMark(report.Gates.StructurallyValid))
+	a.out("  safety_invariants: %s\n", gateMark(report.Gates.SafetyInvariants))
+	a.out("  critical_ambiguous: %s\n", gateMark(report.Gates.CriticalAmbiguous))
+	a.out("  adversarial_in_schema: %s\n", gateMark(report.Gates.AdversarialInSchema))
+	a.out("  semantic_pass_rate: %s (%.1f%%, required %.1f%%)\n",
+		gateMark(report.Gates.SemanticPassRateMet),
+		report.Gates.SemanticPassRate*100, report.Gates.MinSemanticPassRate*100)
+	a.out("  repair_rate: %s (%.1f%%, allowed %.1f%%)\n",
+		gateMark(report.Gates.RepairRateMet),
+		report.Gates.RepairRate*100, report.Gates.MaxRepairRate*100)
+
+	if len(report.Results) == 0 {
+		a.out("results: (none)\n")
+		return
+	}
+	a.out("results:\n")
+	for _, result := range report.Results {
+		verdict := "fail"
+		if result.Passed {
+			verdict = "pass"
+		}
+		repaired := ""
+		if result.Repaired {
+			repaired = " repaired"
+		}
+		a.out("  %s %s %s%s\n", result.ID, verdict, result.Status, repaired)
+		for _, failure := range result.Failures {
+			a.out("    - %s\n", failure)
+		}
+	}
+}
+
+func gateMark(met bool) string {
+	if met {
+		return "ok"
+	}
+	return "FAIL"
+}
+
 func (a *App) openStore(ctx context.Context) (Store, config.Config, func(), int) {
 	cfg, err := a.LoadConfig()
 	if err != nil {
@@ -507,6 +801,10 @@ func (a *App) usage(w io.Writer) {
   reusery resolution --id N [--format text|json]     inspect a stored resolution
   reusery discover --profile FILE [--root DIR] [--format text|json]
                                                      run bounded public discovery
+  reusery normalize (--text STR | --file FILE) [--format text|json]
+                                                     structure intent into a provisional contract
+  reusery normalize-eval --corpus FILE [--format text|json]
+                                                     run the intent evaluation corpus (PAID model calls)
   reusery help                                       show this help
 `)
 }

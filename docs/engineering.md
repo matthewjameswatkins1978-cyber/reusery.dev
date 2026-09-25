@@ -39,9 +39,12 @@ not a hand-rolled one, and deliberately kept out of `internal/model`. Packet 5
 adds **zero** dependencies: provider calls use `net/http`, `encoding/json` and
 the same YAML parser. No GitHub SDK — the three REST calls Packet 5 needs are
 trivially hand-written, and an SDK would add dependency and CVE surface for no
-benefit. Auth, Redis, queues, ORMs, search and telemetry still belong to later
-packets. Each future dependency must justify itself against the standard
-library first.
+benefit. Packet 6 also adds **zero** dependencies: the OpenAI Responses API
+call is `net/http` + `encoding/json`, the prompt and schema are embedded with
+`embed`, and the evaluation corpus reuses the same YAML parser. No AI
+orchestration framework, no OpenAI SDK. Auth, Redis, queues, ORMs, search and
+telemetry still belong to later packets. Each future dependency must justify
+itself against the standard library first.
 
 ## Configuration
 
@@ -52,6 +55,8 @@ REUSERY_HTTP_ADDR=:8080             # default, optional
 REUSERY_LOG_LEVEL=info              # default, optional
 REUSERY_DATABASE_URL=postgres://... # REQUIRED (Packet 3 onwards)
 REUSERY_GITHUB_TOKEN=               # optional, discovery rate limits only
+REUSERY_OPENAI_API_KEY=             # optional, model-backed commands only
+REUSERY_OPENAI_MODEL=gpt-5.6-luna   # optional model override
 ```
 
 No config framework: `os.Getenv` plus a small parser is sufficient.
@@ -71,6 +76,14 @@ unauthenticated endpoints work without it. It is never required to start
 `reusery serve`, never part of readiness, never logged, and never included in a
 configuration error — the token is only ever placed in an `Authorization`
 header, never in a URL.
+
+Model configuration is deliberately **not** part of `Load()`. `LoadModel()`
+returns a `ModelConfig{OpenAIAPIKey, OpenAIModel}` and never consults the
+database URL, so `reusery normalize` and `reusery normalize-eval` work with no
+PostgreSQL configured at all: natural-language structuring and the database are
+independent concerns. The key is optional globally and required only by
+commands that actually invoke OpenAI; it is never logged, never persisted and
+never included in an error.
 
 ## HTTP server
 
@@ -203,12 +216,20 @@ behavioural evidence at all.
 | `reusery resolve --request FILE [--format text\|json]` | run a resolve request |
 | `reusery resolution --id N [--format text\|json]` | inspect a stored resolution |
 | `reusery discover --profile FILE [--root DIR] [--format text\|json]` | run bounded public discovery |
+| `reusery normalize (--text STR \| --file FILE) [--format text\|json]` | structure intent into a provisional contract (no PostgreSQL) |
+| `reusery normalize-eval --corpus FILE [--format text\|json]` | run the intent evaluation corpus (**paid** model calls, no PostgreSQL) |
 | `reusery help` | usage |
 
 Exit codes: `0` success, `1` execution failure, `2` usage error — and for
 `discover`, a **profile problem** is a usage error while provider or
-persistence failure is an execution failure. JSON goes to stdout only; logs and
-errors go to stderr, so `--format json` output stays machine-readable.
+persistence failure is an execution failure. For `normalize`, `2` is a usage
+**or local-input** problem (missing/both input flags, bad `--format`,
+unreadable file, empty/oversized/invalid-UTF-8 input) while a provider
+failure, a configuration failure or a validation failure after the single
+repair is `1`; `needs_clarification` and `unsupported` are valid `0` results,
+not crashes. For `normalize-eval`, a corpus problem is `2` and an unmet
+acceptance gate is `1`. JSON goes to stdout only; logs, warnings and errors go
+to stderr, so `--format json` output stays machine-readable.
 
 ## Public discovery (Packet 5)
 
@@ -268,6 +289,70 @@ classified as `authentication` while the other providers still succeed, and
 once with a token to confirm all three providers run. Never put a token in
 shell history, logs, screenshots or reports.
 
+## Natural-language intent normalisation (Packet 6)
+
+Domain in `internal/intent`, the first model adapter in
+`internal/intent/providers/openai`, versioned assets in
+`internal/intent/assets`, evaluation corpus in `evals/intent`. Full design
+notes live in [intent-normalisation.md](intent-normalisation.md); the
+decisions worth recording here are:
+
+- **Three things stay separate.** A provider-independent intent domain, a
+  normalisation service that owns prompt/schema/validation/repair/identifiers,
+  and a model adapter that speaks one provider's wire protocol. The service
+  depends on a `Provider` interface, never on OpenAI directly, and the adapter
+  contains no Reusery product semantics.
+- **Responses API, not Chat Completions.** `POST
+  https://api.openai.com/v1/responses` with `store: false`,
+  `reasoning.effort: "low"`, `max_output_tokens: 2500`, no `tools` field at
+  all, and `text.format.type = "json_schema"` with `strict: true`. Each call
+  is self-contained: no `previous_response_id`, no `conversation`.
+- **Default model `gpt-5.6-luna`.** Intent normalisation is bounded structured
+  work and Reusery has a first-class cost-saving objective, so the default is
+  deliberately not the strongest available model. `REUSERY_OPENAI_MODEL`
+  overrides it for evaluation; the model string the provider actually returns
+  is recorded in metadata.
+- **Absolute maximum of two paid calls per normalisation** — one initial and
+  one semantic repair, with a 20 s timeout per call. There are no automatic
+  operational retries: a hidden retry is another paid call and can amplify an
+  outage. Local input errors are rejected before any paid call.
+- **Versioned prompt and schema.** `intent-normalizer/v1`,
+  `intent-repair/v1` and schema version 1 live as embedded, reviewable files,
+  and both versions feed the deterministic identity digest.
+- **Deterministic identifiers, never model-supplied ones.**
+  `intent/<sha256>` for the primitive, `intent/<sha256>/v1` for the contract,
+  `req-001…` in model output order. The digest covers the normalised input,
+  the validated draft, the prompt version and the schema version.
+- **No score, no confidence.** The verdict is `ready` / `needs_clarification`
+  / `unsupported`. Semantic validation is deterministic Go code — strict JSON
+  Schema is never trusted on its own.
+- **No persistence, no discovery, no resolution.** No migration exists for
+  model-derived drafts; `normalize` never calls `discover` or `resolve`, and
+  the generated contract is provisional.
+- **External model policy.** CI never requires `REUSERY_OPENAI_API_KEY` and
+  never calls OpenAI: adapter tests use `httptest`, normaliser tests use a
+  fake provider, and the corpus harness uses fixtures. Live corpus runs are
+  manual release-gate evidence.
+- **Secret handling.** The API key is optional globally and required only by
+  model-backed commands. It is never logged, never persisted, never placed in
+  a URL and never included in an error; provider errors carry a status code
+  and at most a length-capped provider message.
+
+### Manual live corpus procedure
+
+Run before freezing any packet that touches intent normalisation:
+
+```powershell
+# five manual smoke cases first (see intent-normalisation.md)
+go run ./cmd/reusery normalize --file examples/normalize-bounded-subprocess.txt --format text
+
+# then the corpus, twice
+go run ./cmd/reusery normalize-eval --corpus evals/intent/v1.yaml --format text
+```
+
+Record provider, model, case counts, pass/fail, repair count and rate, and
+input/output/reasoning/total tokens. Never record the API key.
+
 ## Quality checks
 
 ```powershell
@@ -310,10 +395,13 @@ Standard `testing` only. Coverage is behavioural, not numeric:
 - `internal/catalog` — strict YAML loading, path-escape rejection, relationship
   validation and idempotent seeding.
 - `internal/cli` — command parsing, output formats, exit codes, stdout/stderr
-  separation, and `discover` with injected discovery behaviour (no network).
+  separation, `discover` with injected discovery behaviour (no network), and
+  `normalize` / `normalize-eval` with an injected normaliser, including the
+  proof that neither command loads PostgreSQL configuration nor opens a store.
 - `internal/config` — defaults, env overrides, blank-value handling, missing
-  and malformed database URL rejection, level parsing, and the optional GitHub
-  token never leaking into errors.
+  and malformed database URL rejection, level parsing, the optional GitHub
+  token never leaking into errors, and the separate `LoadModel` path that
+  succeeds with no database URL.
 - `internal/discovery` — profile loading and structural validation, evidence
   ID stability, defensive candidate validation, merge/ordering/budget
   semantics, append-only persistence, and partial provider failure.
@@ -324,6 +412,22 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   mapping, stable specimen IDs, exact version preservation, licence unknowns,
   deduplication, request/result budgets, rate-limit and auth classification,
   and proof that no provider can emit behavioural evidence.
+- `internal/intent` — local input rejection before any paid call, status
+  mapping, deterministic identifiers and requirement ordering, the single
+  bounded repair and the two-call absolute maximum, metadata and usage
+  aggregation, per-call timeout, strict-schema assertions (closed objects,
+  enums, no prohibited field, supported keyword subset), prompt/version
+  stability, every validation bound and enum, evaluation-corpus loading and
+  gate computation, and the safety invariants: no prohibited field can appear
+  in a Result, an injection-shaped response cannot introduce authority, and a
+  generated contract stays `unknown` for the unchanged Packet 2 evaluator.
+- `internal/intent/providers/openai` — `httptest` tests for the endpoint and
+  request shape (bearer token, model, `store: false`, low reasoning effort,
+  strict `json_schema`, no tools, bounded `max_output_tokens`), response
+  parsing, model/response-ID/usage/reasoning-token extraction, every
+  classification (401/403/429/5xx/408, refusal, incomplete, missing text,
+  malformed JSON, oversized body), no hidden retries, and that the API key
+  never appears in an error.
 - `internal/store/postgres` (`-tags=integration`) — migration up/down/up,
   round-trips for every domain object, requirement and rejection ordering,
   transaction rollback, readiness, and `persist → reload → resolver.Evaluate`.
