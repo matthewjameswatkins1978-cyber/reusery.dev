@@ -1,0 +1,6 @@
+{
+  "specimen_ids": [
+    "public/pkg.go.dev/github.com%2Fpkg%2Ferrors@v0.9.1",
+    "public/github/repository/golang/tools"
+  ]
+}

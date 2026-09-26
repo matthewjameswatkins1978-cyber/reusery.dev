@@ -13,6 +13,7 @@ import (
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/config"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent/providers/openai"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 )
 
@@ -65,7 +66,7 @@ func sampleNormalizeResult() intent.Result {
 		Assumptions: []string{"Command arguments are supplied separately rather than through a shell."},
 		Metadata: intent.GenerationMetadata{
 			Provider:      "openai",
-			Model:         "gpt-5.6-luna",
+			Model:         "gpt-6-luna",
 			ResponseID:    "resp_abc",
 			PromptVersion: intent.PromptVersion,
 			SchemaVersion: intent.SchemaVersion,
@@ -102,7 +103,19 @@ func newNormalizeApp(t *testing.T, stdout, stderr io.Writer, normalizer Normaliz
 }
 
 func workingModelConfig() config.ModelConfig {
-	return config.ModelConfig{OpenAIAPIKey: "sk-test", OpenAIModel: "gpt-5.6-luna"}
+	return config.ModelConfig{OpenAIAPIKey: "sk-test", OpenAIModel: "gpt-6-luna"}
+}
+
+// TestWiredIntentModelDefaultsAgree locks the Packet 7 model-default
+// correction in both places that own one, so config and the adapter cannot
+// drift apart again.
+func TestWiredIntentModelDefaultsAgree(t *testing.T) {
+	if config.DefaultOpenAIModel != "gpt-6-luna" {
+		t.Errorf("config default = %q, want gpt-6-luna", config.DefaultOpenAIModel)
+	}
+	if openai.DefaultModel != config.DefaultOpenAIModel {
+		t.Errorf("adapter default = %q, config default = %q", openai.DefaultModel, config.DefaultOpenAIModel)
+	}
 }
 
 func TestNormalizeRequiresExactlyOneInputSource(t *testing.T) {
@@ -208,7 +221,7 @@ func TestNormalizeTextOutputIsInspectableAndFreeOfScores(t *testing.T) {
 		"[language] required: Go",
 		"Command arguments are supplied separately",
 		"provider: openai",
-		"model: gpt-5.6-luna",
+		"model: gpt-6-luna",
 		"prompt_version: intent-normalizer/v1",
 		"schema_version: 1",
 		"model_calls: 1",
@@ -289,7 +302,7 @@ func TestNormalizeHandlesClarificationAndUnsupportedResults(t *testing.T) {
 					WhyItMatters: "These require materially different behaviours and solution families.",
 				}},
 				Assumptions: []string{},
-				Metadata:    intent.GenerationMetadata{Provider: "openai", Model: "gpt-5.6-luna", Calls: 1},
+				Metadata:    intent.GenerationMetadata{Provider: "openai", Model: "gpt-6-luna", Calls: 1},
 			},
 			wantContains: []string{
 				"status: needs_clarification",
@@ -306,7 +319,7 @@ func TestNormalizeHandlesClarificationAndUnsupportedResults(t *testing.T) {
 				Ambiguities:            []intent.Ambiguity{},
 				Assumptions:            []string{},
 				UnsupportedReason:      "The request is not an engineering selection, reuse or resolution request.",
-				Metadata:               intent.GenerationMetadata{Provider: "openai", Model: "gpt-5.6-luna", Calls: 1},
+				Metadata:               intent.GenerationMetadata{Provider: "openai", Model: "gpt-6-luna", Calls: 1},
 			},
 			wantContains: []string{
 				"status: unsupported",

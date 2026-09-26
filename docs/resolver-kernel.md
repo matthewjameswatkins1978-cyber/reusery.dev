@@ -114,3 +114,33 @@ kernel and persists exactly one `Resolution` — including `build_locally`.
 Load or validation failures persist nothing; persistence failures are returned.
 See `docs/evidence-evaluation.md` for the per-requirement semantics beneath
 this, and `RESOLVER.md` for the product-level flow.
+
+## Packet 7: what the kernel does not do
+
+Packet 4's acceptance rule — **every required behavioural requirement
+satisfied** — remains exactly as written above. Nothing in Packet 7 changes it,
+and `Resolve` still behaves the way this document describes.
+
+Two things above the kernel were added later, and they are deliberately not
+implemented by loosening the kernel:
+
+- **REFERENCE has its own meaning.** `REFERENCE` is useful engineering
+  knowledge that should not be copied or depended upon directly. It does not
+  mean "this specimen satisfies the complete behavioural contract". A
+  REFERENCE result may carry unresolved required requirements, provided there
+  is no required `fail`, no `conflicting` evidence, documented discovery
+  relevance and inspectable provenance — and provided the resolution says
+  explicitly that behavioural satisfaction is not established. The kernel's
+  strict rule still applies to `REUSE`, `ADAPT` and `DEPEND`.
+
+- **UNKNOWN is not BUILD LOCALLY.** When plausible candidates remain but
+  required behaviour is unknown, the quality layer returns
+  `needs_verification` and persists **no** resolution at all. Only an empty
+  candidate set, a hard policy deny on every usable candidate, explicit
+  required `fail`/`conflicting` evidence on every usable candidate, or explicit
+  unsuitability justifies `build_locally`.
+
+Both live in `internal/resolver/quality.go` and
+`internal/resolver/quality_service.go`, which consume the evaluator and the
+kernel's helpers but never modify them. See
+[docs/evidence-policy-resolution.md](evidence-policy-resolution.md).

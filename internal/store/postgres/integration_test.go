@@ -72,6 +72,39 @@ func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
 	return exists
 }
 
+// columnExists reports whether table carries a column, for migration lifecycle
+// assertions that must distinguish 00001 from 00002.
+func columnExists(t *testing.T, pool *pgxpool.Pool, table, column string) bool {
+	t.Helper()
+
+	var exists bool
+	err := pool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+		)`, table, column).Scan(&exists)
+	if err != nil {
+		t.Fatalf("column exists query for %s.%s: %v", table, column, err)
+	}
+	return exists
+}
+
+// migrateUpTo applies migrations through the given version only, so the
+// lifecycle test can observe the schema between 00001 and 00002.
+func migrateUpTo(t *testing.T, pool *pgxpool.Pool, version int64) {
+	t.Helper()
+
+	provider, db, err := newProvider(pool)
+	if err != nil {
+		t.Fatalf("goose provider: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := provider.UpTo(context.Background(), version); err != nil {
+		t.Fatalf("migrate up to %d: %v", version, err)
+	}
+}
+
 // sameStrings compares ordered string slices, treating nil and empty as equal.
 func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
@@ -102,6 +135,9 @@ func assertResolutionEqual(t *testing.T, got, want model.Resolution) {
 	}
 	if !sameStrings(got.EvidenceIDs, want.EvidenceIDs) {
 		t.Errorf("evidence IDs = %v, want %v", got.EvidenceIDs, want.EvidenceIDs)
+	}
+	if got.PolicyID != want.PolicyID {
+		t.Errorf("policy ID = %q, want %q", got.PolicyID, want.PolicyID)
 	}
 	if len(got.Rejected) != len(want.Rejected) {
 		t.Fatalf("got %d rejections, want %d", len(got.Rejected), len(want.Rejected))
@@ -164,7 +200,12 @@ func fixtureSpecimen() model.Specimen {
 	}
 }
 
-// A. Migration lifecycle: zero -> up -> down -> up.
+// A. Migration lifecycle: zero -> 00001 -> 00002 -> down -> up.
+//
+// Packet 7 adds resolutions.policy_id. The lifecycle deliberately observes the
+// schema between the two migrations, because the whole point of 00002 is that
+// a resolution written by a Packet 1-6 binary keeps loading afterwards with an
+// empty PolicyID.
 func TestIntegrationMigrationLifecycle(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
@@ -172,25 +213,117 @@ func TestIntegrationMigrationLifecycle(t *testing.T) {
 	if tableExists(t, pool, "primitives") {
 		t.Fatal("primitives should not exist before migration")
 	}
-	if err := Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate up: %v", err)
-	}
+
+	// zero -> 00001
+	migrateUpTo(t, pool, 1)
 	if !tableExists(t, pool, "primitives") {
-		t.Fatal("primitives missing after migrate up")
+		t.Fatal("primitives missing after 00001")
+	}
+	if columnExists(t, pool, "resolutions", "policy_id") {
+		t.Fatal("policy_id must not exist before 00002")
+	}
+	oldID := insertPrePolicyResolution(t, pool)
+
+	// 00001 -> 00002
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate up to 00002: %v", err)
+	}
+	if !columnExists(t, pool, "resolutions", "policy_id") {
+		t.Fatal("policy_id missing after 00002")
 	}
 
+	store := NewStore(pool)
+	old, err := store.GetResolution(ctx, oldID)
+	if err != nil {
+		t.Fatalf("load pre-00002 resolution: %v", err)
+	}
+	if old.PolicyID != "" {
+		t.Errorf("pre-00002 resolution PolicyID = %q, want empty", old.PolicyID)
+	}
+
+	// down: 00002 rolls back its own column and leaves 00001 intact.
 	if err := MigrateDown(ctx, pool); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	if tableExists(t, pool, "primitives") {
-		t.Fatal("primitives still present after migrate down")
+	if columnExists(t, pool, "resolutions", "policy_id") {
+		t.Fatal("policy_id still present after migrate down")
+	}
+	if !tableExists(t, pool, "primitives") {
+		t.Fatal("00001 must survive the 00002 rollback")
+	}
+	if !tableExists(t, pool, "resolutions") {
+		t.Fatal("resolutions must survive the 00002 rollback")
 	}
 
+	// up again
 	if err := Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate up again: %v", err)
 	}
 	if !tableExists(t, pool, "primitives") {
 		t.Fatal("primitives missing after second migrate up")
+	}
+	if !columnExists(t, pool, "resolutions", "policy_id") {
+		t.Fatal("policy_id missing after second migrate up")
+	}
+	if _, err := store.GetResolution(ctx, oldID); err != nil {
+		t.Fatalf("pre-00002 resolution must survive down/up: %v", err)
+	}
+}
+
+// insertPrePolicyResolution writes a resolution exactly as a Packet 1-6 binary
+// would have: no policy_id column exists yet.
+func insertPrePolicyResolution(t *testing.T, pool *pgxpool.Pool) int64 {
+	t.Helper()
+
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO resolutions (primitive_id, contract_id, outcome, reasons, resolved_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id`,
+		"process/bounded-subprocess", "process/bounded-subprocess/v1", "build_locally",
+		[]string{"no candidate option satisfied all required contract requirements"},
+		time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert pre-policy resolution: %v", err)
+	}
+	return id
+}
+
+// A Packet 7 resolution round-trips its PolicyID, and one produced without a
+// policy round-trips an empty PolicyID.
+func TestIntegrationResolutionPolicyIDRoundTrip(t *testing.T) {
+	store := newMigratedStore(t)
+	ctx := context.Background()
+	resolvedAt := time.Date(2026, time.September, 26, 9, 0, 0, 0, time.UTC)
+
+	cases := map[string]string{
+		"with policy":    "public-go-baseline/v1",
+		"without policy": "",
+	}
+	for name, policyID := range cases {
+		t.Run(name, func(t *testing.T) {
+			want := model.Resolution{
+				PrimitiveID: "process/bounded-subprocess",
+				ContractID:  "process/bounded-subprocess/v1",
+				Outcome:     model.OutcomeReference,
+				SpecimenID:  "public/github/code/example/repo@abc123:runner.go",
+				Reasons:     []string{"selected as reference-only engineering knowledge"},
+				Unknowns:    []string{"public/github/code/example/repo@abc123: supports-timeout unknown"},
+				EvidenceIDs: []string{"ev-1"},
+				PolicyID:    policyID,
+				ResolvedAt:  resolvedAt,
+			}
+			id, err := store.InsertResolution(ctx, want)
+			if err != nil {
+				t.Fatalf("insert: %v", err)
+			}
+			got, err := store.GetResolution(ctx, id)
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			assertResolutionEqual(t, got, want)
+		})
 	}
 }
 

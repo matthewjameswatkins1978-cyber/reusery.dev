@@ -101,7 +101,11 @@ type Resolution struct {
 	Rejected    []Rejection `json:"rejected,omitempty"`
 	Unknowns    []string    `json:"unknowns,omitempty"`
 	EvidenceIDs []string    `json:"evidence_ids,omitempty"`
-	ResolvedAt  time.Time   `json:"resolved_at"`
+	// PolicyID names the deterministic policy profile that justified this
+	// decision. Empty for resolutions produced before Packet 7, and for the
+	// Packet 4 kernel which has no policy layer.
+	PolicyID   string    `json:"policy_id,omitempty"`
+	ResolvedAt time.Time `json:"resolved_at"`
 }
 
 // Rejection is negative knowledge worth preserving.

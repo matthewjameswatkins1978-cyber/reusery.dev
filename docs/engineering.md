@@ -56,7 +56,7 @@ REUSERY_LOG_LEVEL=info              # default, optional
 REUSERY_DATABASE_URL=postgres://... # REQUIRED (Packet 3 onwards)
 REUSERY_GITHUB_TOKEN=               # optional, discovery rate limits only
 REUSERY_OPENAI_API_KEY=             # optional, model-backed commands only
-REUSERY_OPENAI_MODEL=gpt-5.6-luna   # optional model override
+REUSERY_OPENAI_MODEL=gpt-6-luna     # optional model override
 ```
 
 No config framework: `os.Getenv` plus a small parser is sufficient.
@@ -216,6 +216,8 @@ behavioural evidence at all.
 | `reusery resolve --request FILE [--format text\|json]` | run a resolve request |
 | `reusery resolution --id N [--format text\|json]` | inspect a stored resolution |
 | `reusery discover --profile FILE [--root DIR] [--format text\|json]` | run bounded public discovery |
+| `reusery enrich --request FILE [--root DIR] [--format text\|json]` | record attributable metadata observations (network) |
+| `reusery choose --request FILE --policy FILE [--feedback FILE] [--root DIR] [--format text\|json]` | compare candidates under policy (offline) |
 | `reusery normalize (--text STR \| --file FILE) [--format text\|json]` | structure intent into a provisional contract (no PostgreSQL) |
 | `reusery normalize-eval --corpus FILE [--format text\|json]` | run the intent evaluation corpus (**paid** model calls, no PostgreSQL) |
 | `reusery help` | usage |
@@ -228,8 +230,14 @@ unreadable file, empty/oversized/invalid-UTF-8 input) while a provider
 failure, a configuration failure or a validation failure after the single
 repair is `1`; `needs_clarification` and `unsupported` are valid `0` results,
 not crashes. For `normalize-eval`, a corpus problem is `2` and an unmet
-acceptance gate is `1`. JSON goes to stdout only; logs, warnings and errors go
-to stderr, so `--format json` output stays machine-readable.
+acceptance gate is `1`. For `enrich`, a missing/oversized/duplicate specimen
+list or an unreadable request is `2`, and storage failure or a run in which
+every applicable provider failed is `1`. For `choose`, request, policy and
+feedback structural problems are `2`; storage, invalid stored data and
+persistence failure are `1`; **`resolved` and `needs_verification` are both
+`0`** — needs_verification is a product outcome, not a crash. JSON goes to
+stdout only; logs, warnings and errors go to stderr, so `--format json` output
+stays machine-readable.
 
 ## Public discovery (Packet 5)
 
@@ -307,11 +315,17 @@ decisions worth recording here are:
   `reasoning.effort: "low"`, `max_output_tokens: 2500`, no `tools` field at
   all, and `text.format.type = "json_schema"` with `strict: true`. Each call
   is self-contained: no `previous_response_id`, no `conversation`.
-- **Default model `gpt-5.6-luna`.** Intent normalisation is bounded structured
+- **Default model `gpt-6-luna`.** Intent normalisation is bounded structured
   work and Reusery has a first-class cost-saving objective, so the default is
-  deliberately not the strongest available model. `REUSERY_OPENAI_MODEL`
-  overrides it for evaluation; the model string the provider actually returns
-  is recorded in metadata.
+  deliberately not the strongest available model. Packet 6 was released with
+  `gpt-5.6-luna`; Packet 7 changes the default to `gpt-6-luna` because that is
+  the model the two successful release-gate corpus runs actually used, the only
+  model the evaluation account exposed, the current documented efficient
+  cost-sensitive model, and cheaper per published token pricing.
+  `REUSERY_OPENAI_MODEL` still overrides it for evaluation; the model string
+  the provider actually returns is recorded in metadata. Prompt version, schema
+  version, reasoning effort, `store: false` and the two-call maximum are
+  unchanged.
 - **Absolute maximum of two paid calls per normalisation** — one initial and
   one semantic repair, with a 20 s timeout per call. There are no automatic
   operational retries: a hidden retry is another paid call and can amplify an
@@ -353,6 +367,101 @@ go run ./cmd/reusery normalize-eval --corpus evals/intent/v1.yaml --format text
 Record provider, model, case counts, pass/fail, repair count and rate, and
 input/output/reasoning/total tokens. Never record the API key.
 
+## Evidence, policy and resolution quality (Packet 7)
+
+Domain in `internal/policy` (facts, profiles, evaluation, feedback),
+`internal/enrichment` (providers, evidence identity, budgets) and
+`internal/resolver` (`quality.go`, `quality_service.go`). Full design notes
+live in [evidence-policy-resolution.md](evidence-policy-resolution.md); the
+decisions worth recording here are:
+
+- **Enrichment providers.**
+  - `deps.dev` — code-owned base `https://api.deps.dev`, stable **v3** API
+    (never v3alpha, never HTML):
+    `GET /v3/systems/GO/packages/{module}/versions/{version}` and
+    `GET /v3/systems/GO/packages/{module}/versions/{version}:requirements`.
+    Module path and version are percent-escaped as single path segments; module
+    identity is recovered from Packet 5's `package_module` claim and the exact
+    version from `Specimen.Source.Revision`. If either is missing, an
+    `identity_unresolved` issue is reported and nothing is guessed.
+  - `github-metadata` — `GET /repos/{owner}/{repo}` on
+    `https://api.github.com`, reusing Packet 5's shared GitHub client (same
+    optional `REUSERY_GITHUB_TOKEN`, `X-GitHub-Api-Version: 2026-03-10`, rate
+    limits, fixed host, safe redirects). Only `archived`, `pushed_at`,
+    `default_branch` and `license.spdx_id` are decoded — no stars, forks or
+    watchers, and popularity never reaches ordering.
+- **Enrichment budgets are fixed, not configurable.** 24 specimens per run, 2
+  providers per specimen, 3 HTTP requests per provider/specimen, 10 s per
+  provider call, 30 s for the whole run, 2 MiB per response. No pagination, no
+  retry loops. One provider failing never erases another's evidence; only an
+  all-providers-failed run is an execution failure.
+- **Enrichment trust rules.** INFO/UNKNOWN only, `applies_to` always empty, no
+  PASS/FAIL ever — structurally validated before persistence. Evidence IDs are
+  `enrichment/<provider>/<sha256>` over the same length-prefixed canonical
+  form Packet 5 uses.
+- **Fact artifact format.** Policy never parses `Evidence.Claim`. Packet 7
+  enrichment evidence carries a canonical JSON value in `Evidence.Artifact`:
+  `{"schema_version":1,"value":<string|int|bool>}`. Historical artifacts are
+  untouched, and an unreadable fact artifact makes the fact **unknown**, never
+  guessed.
+- **Policy profiles are strict YAML** with `schema_version`, exact-string
+  licence lists, `allow`/`review`/`deny` actions (omitted action ⇒ `review`, so
+  an incomplete profile can never silently allow), optional numeric thresholds
+  (`dependencies.max_direct`, `maintenance.max_days_since_push`,
+  `maintenance.max_days_since_release`) where **absent means no threshold**, and
+  `selection.max_options` bounded to 1..5. Path escape and every structural
+  rule are rejected at load time. Nothing in `internal/policy` imports
+  PostgreSQL.
+- **No legal advice, no security proof.** Licence decisions are phrased
+  "allowed by policy `<id>`" / "denied by policy `<id>`". A zero advisory count
+  is phrased as an absence of *reported* identifiers at the observation time
+  and never as secure/safe/vulnerability-free. Neither becomes EvidencePass.
+- **Migration `00002_resolution_policy.sql`** adds `resolutions.policy_id
+  text NOT NULL DEFAULT ''`, with a reversible `DROP COLUMN` down migration.
+  Pre-Packet-7 resolutions load with an empty `PolicyID`; nothing is backfilled.
+  Candidate assessments, shortlists and trade-offs are deliberately **not**
+  persisted.
+- **`choose` is offline by construction.** It opens PostgreSQL and an authored
+  policy file and nothing else. No provider credential is consulted.
+
+### Manual live smoke procedure
+
+```powershell
+# 1. migrate, then seed the canonical first primitive
+goose -dir internal/store/postgres/migrations postgres "$env:REUSERY_DATABASE_URL" up
+go run ./cmd/reusery seed --root . --manifest catalogue/dev/bounded-subprocess/manifest.yaml
+
+# 2. discover real candidates
+go run ./cmd/reusery discover --root . --profile discovery/process/bounded-subprocess-v1.yaml --format json
+
+# 3. copy the returned specimen IDs into examples/enrich-bounded-subprocess.json
+go run ./cmd/reusery enrich --root . --request examples/enrich-bounded-subprocess.json --format text
+
+# 4. choose under the baseline policy (offline), then re-choose with feedback
+go run ./cmd/reusery choose --root . --request examples/quality-bounded-subprocess.json `
+  --policy policies/public-go-baseline-v1.yaml --format text
+go run ./cmd/reusery choose --root . --request examples/quality-bounded-subprocess.json `
+  --policy policies/public-go-baseline-v1.yaml `
+  --feedback examples/quality-feedback-not-quite.json --format text
+```
+
+Live calls are manual. **CI never calls deps.dev or GitHub** — enrichment
+provider tests use `httptest`, `choose` performs no network call, and no
+provider credential is required to build or test.
+
+## Benchmark records (Packet 7)
+
+`benchmarks/` documents the record schema; `internal/benchmark` implements
+loading, pairing and aggregation. The rule that matters: **MEASURED and
+MODELLED fields are structurally separate** (`Measured` vs `Estimated`) and are
+aggregated by different functions into different types, so an estimate can
+never inflate a measurement. Every measured field is optional — an unobserved
+metric stays unknown and aggregates as a `missing` count, never as zero. A
+missing baseline or missing Reusery run reports `comparable: false` with a
+reason instead of manufacturing a delta, and `savings_percent` is computed only
+when the baseline value exists and is non-zero. Packet 7 establishes recording
+and aggregation only; **Packet 16 owns release-level validation claims.**
+
 ## Quality checks
 
 ```powershell
@@ -391,13 +500,34 @@ Standard `testing` only. Coverage is behavioural, not numeric:
 - `internal/server` — `/health` and `/ready` status codes, JSON bodies,
   content-type headers, and the failing-checker 503 path.
 - `internal/resolver` — deterministic evaluation semantics (Packet 2), the
-  resolution kernel and the application service (Packet 4).
+  resolution kernel and the application service (Packet 4), and the Packet 7
+  quality layer: dispositions, policy-driven assessment, lexicographic
+  ordering, tie-break disclosure, bounded shortlisting, feedback-driven
+  re-resolution and `needs_verification` persisting nothing.
+- `internal/policy` — fact extraction (including conflicting and malformed
+  artifacts), strict policy loading, every allow/review/deny rule, and each
+  supported feedback reason with its refinement and error paths.
+- `internal/enrichment` — evidence identity stability, the INFO/UNKNOWN-only
+  trust rules, budgets, partial failure and idempotent append-only persistence.
+- `internal/enrichment/providers/*` — `httptest` fixture tests for deps.dev
+  request mapping, module-path escaping, exact version preservation, zero/one/
+  many licences, advisory counts (including zero), dependency counts,
+  deprecation, malformed JSON, oversized bodies, 404/429/5xx/timeout, request
+  budget, and for GitHub repository/code mapping, licence variants
+  (`null`/`NOASSERTION`/`NONE`), auth, rate limits, timeouts, token-free
+  errors, and proof that no popularity field or behavioural evidence is
+  produced.
+- `internal/benchmark` — strict record loading, pairing rules (missing side,
+  variant mismatch, success mismatch), delta and savings-percentage rules,
+  unknown preservation, and measured/estimated separation.
 - `internal/catalog` — strict YAML loading, path-escape rejection, relationship
   validation and idempotent seeding.
 - `internal/cli` — command parsing, output formats, exit codes, stdout/stderr
-  separation, `discover` with injected discovery behaviour (no network), and
-  `normalize` / `normalize-eval` with an injected normaliser, including the
-  proof that neither command loads PostgreSQL configuration nor opens a store.
+  separation, `discover` with injected discovery behaviour (no network),
+  `enrich` with an injected enricher, `choose` with an injected repository and
+  an authored policy (no network), and `normalize` / `normalize-eval` with an
+  injected normaliser, including the proof that none of these leak network or
+  database access into a command that must not have it.
 - `internal/config` — defaults, env overrides, blank-value handling, missing
   and malformed database URL rejection, level parsing, the optional GitHub
   token never leaking into errors, and the separate `LoadModel` path that
@@ -428,9 +558,11 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   classification (401/403/429/5xx/408, refusal, incomplete, missing text,
   malformed JSON, oversized body), no hidden retries, and that the API key
   never appears in an error.
-- `internal/store/postgres` (`-tags=integration`) — migration up/down/up,
-  round-trips for every domain object, requirement and rejection ordering,
-  transaction rollback, readiness, and `persist → reload → resolver.Evaluate`.
+- `internal/store/postgres` (`-tags=integration`) — migration lifecycle across
+  zero → 00001 → 00002 → down → up (including a pre-00002 row loading with an
+  empty `policy_id`), round-trips for every domain object, requirement and
+  rejection ordering, `PolicyID` round-trips, transaction rollback, readiness,
+  and `persist → reload → resolver.Evaluate`.
 - `internal/cli` (`-tags=integration`) — the full vertical slice against real
   PostgreSQL: migrate → seed → resolve → persist → inspect, for both `depend`
   and `build_locally`; plus public discovery against real PostgreSQL with

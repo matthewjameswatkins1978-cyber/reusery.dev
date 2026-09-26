@@ -1,0 +1,55 @@
+# PUBLIC GO BASELINE — a conservative starting policy for reusing public Go code.
+#
+# This is a BASELINE. It is not legal advice, not a security assurance and not
+# a universal company policy. Reusery does not evaluate licence compatibility:
+# it compares the exact expression a provider returned against the exact lists
+# authored here, and phrases the result as "allowed by policy <id>" or
+# "denied by policy <id>".
+#
+# It deliberately contains no subjective taste. There is no "good dependency
+# count", no "good project age", no popularity signal and no numeric score
+# anywhere in it. Omitted numeric thresholds mean NO threshold: maintenance
+# staleness and dependency quantity rules only exist when a limit is authored.
+#
+# review means review. It is not deny, and it is not automatic approval
+# either — it only blocks automatic selection for direct implementation.
+schema_version: 1
+id: public-go-baseline/v1
+
+reuse:
+  allowed:
+    - copy
+    - dependency
+    - adapt
+    - reference
+  preferred: []
+
+license:
+  allow: []
+  deny: []
+  unknown: review
+  multiple: review
+  unlisted: allow
+
+security:
+  known_advisory: review
+  unknown: review
+
+dependencies:
+  unknown: review
+
+maintenance:
+  archived: review
+  deprecated: review
+  stale: review
+  unknown: review
+
+source:
+  require_revision_for:
+    - copy
+    - dependency
+    - adapt
+  missing_revision: review
+
+selection:
+  max_options: 3

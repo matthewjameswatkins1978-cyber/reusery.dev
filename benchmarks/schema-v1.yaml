@@ -1,0 +1,93 @@
+# Reusery benchmark record schema, version 1.
+#
+# This file documents the strict YAML shape that internal/benchmark decodes.
+# It is descriptive: LoadRecord rejects unknown fields, so every key below is
+# the complete vocabulary for schema_version 1.
+#
+# INVARIANT: `measured` holds observed values only. `estimated` holds modelled
+# values only. The two are aggregated by separate functions and are never
+# summed together. An absent field is UNKNOWN, never zero.
+
+schema_version: 1
+
+identity:
+  task_id:
+    type: string
+    required: true
+    description: Stable identifier for the engineering task being measured.
+  variant:
+    type: enum
+    values: [baseline, reusery]
+    required: true
+    description: Which side of a paired experiment produced this record.
+  model:
+    type: string
+    required: true
+    description: Agent or model that performed the run. Paired records with
+      different models are reported as such rather than silently compared.
+  exploratory:
+    type: boolean
+    default: false
+    description: True when the run was exploratory rather than a release gate.
+      An exploratory pair is never evidence of a saving.
+  notes:
+    type: string
+    required: false
+    description: Free-form provenance for the run.
+
+measured:
+  description: Values that were actually observed. Every field is optional.
+  success:
+    type: boolean | null
+    description: Did the run succeed. Null means unknown, and Pair refuses to
+      compare a pair whose success outcome was not measured on both sides.
+  elapsed_ms:
+    type: integer | null
+    description: Wall-clock duration of the run in milliseconds.
+  input_tokens:
+    type: integer | null
+  output_tokens:
+    type: integer | null
+  reasoning_tokens:
+    type: integer | null
+  tool_calls:
+    type: integer | null
+  test_runs:
+    type: integer | null
+  generated_lines:
+    type: integer | null
+    description: Only recorded where genuinely measurable.
+  reused_specimen_ids:
+    type: list of string
+    default: []
+    description: Specimens the Reusery run actually reused.
+  resolution_id:
+    type: integer | null
+    description: Storage identity of the resolution the run acted on.
+
+estimated:
+  description: MODELLED values. Optional, and never merged into measured
+    totals.
+  engineering_minutes:
+    type: integer | null
+    description: Estimated human engineering effort. Never reported as
+      measured.
+  basis:
+    type: string
+    description: How the estimate was arrived at.
+
+pairing:
+  rules:
+    - A record with no counterpart produces comparable: false plus a reason.
+    - Task IDs must match for a pair to be valid.
+    - Variants must be baseline and reusery respectively.
+    - Deltas are computed only where both sides observed the value.
+    - savings_percent is computed only when the baseline value exists and is
+      non-zero.
+    - A success mismatch is surfaced as a reason, never hidden.
+
+reporting:
+  rules:
+    - Packet 7 establishes recording and aggregation only.
+    - Packet 16 owns release-level validation claims.
+    - No savings percentage is ever derived from a single exploratory run.

@@ -24,7 +24,7 @@ func (q *Queries) CountResolutions(ctx context.Context) (int64, error) {
 }
 
 const getResolution = `-- name: GetResolution :one
-SELECT id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at
+SELECT id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at, policy_id
 FROM resolutions
 WHERE id = $1
 `
@@ -42,6 +42,7 @@ func (q *Queries) GetResolution(ctx context.Context, id int64) (Resolution, erro
 		&i.Unknowns,
 		&i.EvidenceIds,
 		&i.ResolvedAt,
+		&i.PolicyID,
 	)
 	return i, err
 }
@@ -69,9 +70,9 @@ func (q *Queries) InsertRejection(ctx context.Context, arg InsertRejectionParams
 }
 
 const insertResolution = `-- name: InsertResolution :one
-INSERT INTO resolutions (primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at
+INSERT INTO resolutions (primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, policy_id, resolved_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at, policy_id
 `
 
 type InsertResolutionParams struct {
@@ -82,6 +83,7 @@ type InsertResolutionParams struct {
 	Reasons     []string
 	Unknowns    []string
 	EvidenceIds []string
+	PolicyID    string
 	ResolvedAt  pgtype.Timestamptz
 }
 
@@ -94,6 +96,7 @@ func (q *Queries) InsertResolution(ctx context.Context, arg InsertResolutionPara
 		arg.Reasons,
 		arg.Unknowns,
 		arg.EvidenceIds,
+		arg.PolicyID,
 		arg.ResolvedAt,
 	)
 	var i Resolution
@@ -107,6 +110,7 @@ func (q *Queries) InsertResolution(ctx context.Context, arg InsertResolutionPara
 		&i.Unknowns,
 		&i.EvidenceIds,
 		&i.ResolvedAt,
+		&i.PolicyID,
 	)
 	return i, err
 }

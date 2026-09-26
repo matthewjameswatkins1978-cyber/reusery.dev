@@ -52,6 +52,21 @@ The trace from source material through extraction, adaptation, verification and 
 
 Project or organisation constraints applied deterministically where possible. Examples include permitted licences, required platforms, forbidden dependencies and minimum evidence requirements.
 
+A policy is a set of explicit rules whose outcomes are exactly:
+
+- **allow**
+- **review**
+- **deny**
+
+A policy decision is **not Evidence**. It never satisfies, fails or refutes a
+behavioural contract requirement, and it never becomes a behavioural PASS. It
+is a statement about a project's constraints applied to facts extracted from
+Evidence, phrased as "allowed by policy `<id>`" or "denied by policy `<id>`".
+
+Policy decisions carry no score, no weight and no confidence. `review` does not
+mean deny, and it does not mean automatic approval either: it only blocks
+automatic selection for direct implementation.
+
 ## VerificationRun
 
 A reproducible attempt to test a specimen against some part of a contract, with environment, inputs, results, artifacts and timestamps recorded.
@@ -65,6 +80,23 @@ The resolver's output. A resolution contains requirements, candidates considered
 - DEPEND
 - REFERENCE
 - BUILD LOCALLY
+
+Since Packet 7 a resolution also records **`policy_id`**: the deterministic
+policy profile that justified the decision. Resolutions written before Packet 7
+carry an empty `policy_id`, which is recorded honestly rather than backfilled.
+
+**REFERENCE does not claim the contract is satisfied.** It means the
+implementation is useful engineering knowledge that should not be copied or
+depended upon directly. A REFERENCE resolution may preserve unresolved
+behavioural requirements in `unknowns`, provided there is no required failure
+and no conflicting evidence — and it states explicitly that behavioural
+satisfaction has not been established.
+
+**`needs_verification` is an intermediate resolver state, not an Outcome.**
+When plausible candidates exist but required behavioural evidence is missing,
+the quality layer returns `needs_verification` and persists no Resolution at
+all. There is no `needs_verification` value in `model.Outcome`, and absence of
+evidence is never converted into `BUILD LOCALLY`.
 
 ## Decision
 

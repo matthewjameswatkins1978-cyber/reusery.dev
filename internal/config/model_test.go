@@ -23,8 +23,8 @@ func TestLoadModelNeverRequiresPostgreSQL(t *testing.T) {
 	if cfg.Model() != DefaultOpenAIModel {
 		t.Errorf("Model() = %q, want %q", cfg.Model(), DefaultOpenAIModel)
 	}
-	if DefaultOpenAIModel != "gpt-5.6-luna" {
-		t.Errorf("DefaultOpenAIModel = %q, want gpt-5.6-luna", DefaultOpenAIModel)
+	if DefaultOpenAIModel != "gpt-6-luna" {
+		t.Errorf("DefaultOpenAIModel = %q, want gpt-6-luna", DefaultOpenAIModel)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,9 +23,13 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/github"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/pkggodev"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment/providers/depsdev"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment/providers/githubmeta"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent/providers/openai"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/server"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store/postgres"
@@ -56,6 +61,12 @@ type Normalizer interface {
 	Normalize(context.Context, string) (intent.Result, error)
 }
 
+// Enricher runs bounded metadata enrichment for named specimens. Tests inject
+// a fake so CLI unit tests never touch the network.
+type Enricher interface {
+	Enrich(context.Context, []string) (enrichment.Result, error)
+}
+
 // App is the command-line application. Production wiring lives in New; tests
 // construct an App directly and inject fakes.
 type App struct {
@@ -75,8 +86,17 @@ type App struct {
 	LoadProfile func(root, profile string) (discovery.Profile, error)
 	// LoadCorpus reads an intent evaluation corpus.
 	LoadCorpus func(path string) (intent.Corpus, error)
+	// LoadPolicy reads a policy profile relative to a repository root. The
+	// path must resolve beneath root.
+	LoadPolicy func(root, profile string) (policy.Policy, error)
+	// LoadFeedback reads a structured "Not quite" feedback file relative to a
+	// repository root.
+	LoadFeedback func(root, path string) ([]policy.Feedback, error)
 	// NewDiscoverer builds the discovery runner for one command invocation.
 	NewDiscoverer func(store Store, cfg config.Config, clock discovery.Clock) Discoverer
+	// NewEnricher builds the enrichment runner for one command invocation.
+	// Only `enrich` constructs one; `choose` is offline by design.
+	NewEnricher func(store Store, cfg config.Config, clock enrichment.Clock) Enricher
 	// NewNormalizer builds the normalisation runner for one command
 	// invocation. It fails only on configuration problems.
 	NewNormalizer func(cfg config.ModelConfig) (Normalizer, error)
@@ -97,7 +117,10 @@ func New() *App {
 		LoadBundle:      catalog.Load,
 		LoadProfile:     discovery.LoadProfile,
 		LoadCorpus:      intent.LoadCorpus,
+		LoadPolicy:      policy.Load,
+		LoadFeedback:    policy.LoadFeedback,
 		NewDiscoverer:   newPublicDiscoverer,
+		NewEnricher:     newPublicEnricher,
 		NewNormalizer:   newOpenAINormalizer,
 		Serve:           serveHTTP,
 		Clock:           time.Now,
@@ -130,6 +153,15 @@ func newPublicDiscoverer(store Store, cfg config.Config, clock discovery.Clock) 
 	})
 }
 
+// newPublicEnricher wires the real Packet 7 enrichment providers over the same
+// optional GitHub token. Enrichment is the only command that constructs one.
+func newPublicEnricher(store Store, cfg config.Config, clock enrichment.Clock) Enricher {
+	return enrichment.NewService(store, clock, []enrichment.Provider{
+		depsdev.New(),
+		githubmeta.New(cfg.GitHubToken),
+	})
+}
+
 // Run executes one command and returns the process exit code.
 // With no arguments the server starts, preserving the pre-CLI behaviour.
 func (a *App) Run(ctx context.Context, args []string) int {
@@ -148,6 +180,10 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.commandResolution(ctx, args[1:])
 	case "discover":
 		return a.commandDiscover(ctx, args[1:])
+	case "enrich":
+		return a.commandEnrich(ctx, args[1:])
+	case "choose":
+		return a.commandChoose(ctx, args[1:])
 	case "normalize":
 		return a.commandNormalize(ctx, args[1:])
 	case "normalize-eval":
@@ -459,6 +495,387 @@ func joinReuseModes(modes []model.ReuseMode) string {
 		parts = append(parts, string(mode))
 	}
 	return strings.Join(parts, ",")
+}
+
+// enrichRequest is the machine-readable input to `reusery enrich`.
+type enrichRequest struct {
+	SpecimenIDs []string `json:"specimen_ids"`
+}
+
+// chooseJSON is the canonical machine-readable choose output. It exposes the
+// effective policy and applied feedback alongside the decision, and carries
+// resolution_id only when a resolution was actually persisted.
+type chooseJSON struct {
+	Status          resolver.DecisionStatus        `json:"status"`
+	PolicyID        string                         `json:"policy_id"`
+	EffectivePolicy policy.EffectiveSummary        `json:"effective_policy"`
+	ResolutionID    int64                          `json:"resolution_id,omitempty"`
+	Resolution      *model.Resolution              `json:"resolution,omitempty"`
+	Selected        *resolver.CandidateAssessment  `json:"selected,omitempty"`
+	Shortlist       []resolver.CandidateAssessment `json:"shortlist"`
+	Assessments     []resolver.CandidateAssessment `json:"assessments"`
+	AppliedFeedback []policy.AppliedFeedback       `json:"applied_feedback"`
+}
+
+// commandEnrich fetches attributable external facts for already-discovered
+// specimens.
+//
+// It persists new INFO/UNKNOWN observations and nothing else: it does not
+// resolve, does not select a candidate and never emits behavioural PASS or
+// FAIL. Enrichment is the only command that opens a network connection to a
+// metadata provider.
+func (a *App) commandEnrich(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("enrich", flag.ContinueOnError)
+	flags.SetOutput(a.Stderr)
+	root := flags.String("root", ".", "repository root directory")
+	requestPath := flags.String("request", "", "path to a JSON enrich request, relative to root")
+	format := flags.String("format", "text", "output format: text or json")
+	if err := flags.Parse(args); err != nil {
+		return ExitUsage
+	}
+	if *requestPath == "" {
+		a.errorf("reusery enrich: --request is required")
+		return ExitUsage
+	}
+	if !validFormat(*format) {
+		a.errorf("reusery enrich: invalid --format %q (want text or json)", *format)
+		return ExitUsage
+	}
+
+	var request enrichRequest
+	if err := readJSONUnder(*root, *requestPath, &request); err != nil {
+		a.errorf("reusery enrich: %v", err)
+		return ExitUsage
+	}
+	if len(request.SpecimenIDs) == 0 {
+		a.errorf("reusery enrich: request contains no specimen_ids")
+		return ExitUsage
+	}
+
+	store, cfg, closeStore, code := a.openStore(ctx)
+	if code != ExitOK {
+		return code
+	}
+	defer closeStore()
+
+	result, runErr := a.NewEnricher(store, cfg, enrichment.Clock(a.Clock)).Enrich(ctx, request.SpecimenIDs)
+
+	// A failed run still carries provider reports so the failure stays
+	// inspectable rather than being swallowed.
+	failure := runErr != nil
+	if runErr != nil {
+		if isEnrichmentUsage(runErr) {
+			a.errorf("reusery enrich: %v", runErr)
+			return ExitUsage
+		}
+		if len(result.Specimens) == 0 {
+			a.errorf("reusery enrich: %v", runErr)
+			return ExitError
+		}
+	}
+
+	if *format == "json" {
+		encoder := json.NewEncoder(a.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			a.errorf("reusery enrich: write output: %v", err)
+			return ExitError
+		}
+	} else {
+		a.writeEnrichText(result)
+	}
+
+	if failure {
+		a.errorf("reusery enrich: %v", runErr)
+		return ExitError
+	}
+	a.errOut("recorded %d observation(s) across %d specimen(s)\n",
+		len(result.Evidence), len(result.Specimens))
+	return ExitOK
+}
+
+func isEnrichmentUsage(err error) bool {
+	return errors.Is(err, enrichment.ErrNoSpecimens) ||
+		errors.Is(err, enrichment.ErrTooManySpecimens) ||
+		errors.Is(err, enrichment.ErrDuplicateSpecimen)
+}
+
+func (a *App) writeEnrichText(result enrichment.Result) {
+	a.out("observed_at: %s\n", result.ObservedAt.Format(time.RFC3339))
+	if len(result.Specimens) == 0 {
+		a.out("specimens: (none)\n")
+		return
+	}
+	for _, report := range result.Specimens {
+		supported := "unsupported"
+		if report.Supported {
+			supported = "supported"
+		}
+		a.out("%s (%s, observations=%d)\n", report.SpecimenID, supported, report.EvidenceCount)
+		for _, provider := range report.Providers {
+			status := "ok"
+			if !provider.Succeeded {
+				status = "failed"
+			}
+			a.out("  provider %s (%s, requests=%d, observations=%d)\n",
+				provider.ID, status, provider.Requests, provider.EvidenceCount)
+			for _, issue := range provider.Issues {
+				a.out("    - %s: %s\n", issue.Kind, issue.Message)
+			}
+		}
+		for _, observation := range result.Evidence {
+			if observation.SubjectID != report.SpecimenID {
+				continue
+			}
+			a.out("    %s %s: %s\n", observation.Result, observation.Kind, observation.Claim)
+		}
+	}
+}
+
+// commandChoose compares candidates under an explicit policy and produces
+// either a justified Resolution or an honest needs_verification.
+//
+// It is deliberately offline: no network call ever happens in `choose`. It
+// operates entirely over stored specimens, stored evidence, authored policy and
+// structured feedback, which is what makes re-resolution cheap and
+// deterministic.
+func (a *App) commandChoose(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("choose", flag.ContinueOnError)
+	flags.SetOutput(a.Stderr)
+	root := flags.String("root", ".", "repository root directory")
+	requestPath := flags.String("request", "", "path to a JSON choose request, relative to root")
+	policyPath := flags.String("policy", "", "path to the policy profile, relative to root")
+	feedbackPath := flags.String("feedback", "", "path to a JSON feedback file, relative to root")
+	format := flags.String("format", "text", "output format: text or json")
+	if err := flags.Parse(args); err != nil {
+		return ExitUsage
+	}
+	if *requestPath == "" {
+		a.errorf("reusery choose: --request is required")
+		return ExitUsage
+	}
+	if *policyPath == "" {
+		a.errorf("reusery choose: --policy is required")
+		return ExitUsage
+	}
+	if !validFormat(*format) {
+		a.errorf("reusery choose: invalid --format %q (want text or json)", *format)
+		return ExitUsage
+	}
+
+	pol, err := a.LoadPolicy(*root, *policyPath)
+	if err != nil {
+		a.errorf("reusery choose: %v", err)
+		return ExitUsage
+	}
+
+	var request resolver.QualityRequest
+	if err := readJSONUnder(*root, *requestPath, &request); err != nil {
+		a.errorf("reusery choose: %v", err)
+		return ExitUsage
+	}
+	if *feedbackPath != "" {
+		feedback, err := a.LoadFeedback(*root, *feedbackPath)
+		if err != nil {
+			a.errorf("reusery choose: %v", err)
+			return ExitUsage
+		}
+		request.Feedback = feedback
+	}
+
+	store, _, closeStore, code := a.openStore(ctx)
+	if code != ExitOK {
+		return code
+	}
+	defer closeStore()
+
+	service := resolver.NewQualityService(store, a.Clock)
+	stored, runErr := service.Choose(ctx, pol, request)
+	if runErr != nil {
+		a.errorf("reusery choose: %v", runErr)
+		return chooseExitCode(runErr)
+	}
+
+	if *format == "json" {
+		encoder := json.NewEncoder(a.Stdout)
+		encoder.SetIndent("", "  ")
+		payload := chooseJSON{
+			Status:          stored.Outcome.Decision.Status,
+			PolicyID:        stored.Outcome.Decision.PolicyID,
+			EffectivePolicy: policy.Summarize(stored.Outcome.EffectivePolicy),
+			ResolutionID:    stored.ResolutionID,
+			Resolution:      stored.Outcome.Decision.Resolution,
+			Selected:        stored.Outcome.Decision.Selected,
+			Shortlist:       stored.Outcome.Decision.Shortlist,
+			Assessments:     stored.Outcome.Decision.Assessments,
+			AppliedFeedback: stored.Outcome.AppliedFeedback,
+		}
+		if err := encoder.Encode(payload); err != nil {
+			a.errorf("reusery choose: write output: %v", err)
+			return ExitError
+		}
+	} else {
+		a.writeChooseText(stored)
+	}
+
+	switch stored.Outcome.Decision.Status {
+	case resolver.StatusNeedsVerification:
+		a.errOut("needs verification: plausible candidates exist but required behavioural evidence is missing; nothing persisted\n")
+	default:
+		if stored.Outcome.Decision.Resolution != nil {
+			a.errOut("resolution %d stored (outcome=%s, policy=%s)\n",
+				stored.ResolutionID, stored.Outcome.Decision.Resolution.Outcome, stored.Outcome.Decision.PolicyID)
+		}
+	}
+	return ExitOK
+}
+
+// chooseExitCode separates structural request/policy/feedback problems
+// (usage) from storage and persistence failures (execution). needs_verification
+// never reaches here: it is a valid product outcome, not a crash.
+func chooseExitCode(err error) int {
+	switch {
+	case errors.Is(err, policy.ErrInvalidPolicy),
+		errors.Is(err, policy.ErrUnsupportedSchema),
+		errors.Is(err, policy.ErrPathEscape),
+		errors.Is(err, policy.ErrInvalidFeedback),
+		errors.Is(err, policy.ErrUnknownFeedbackCandidate),
+		errors.Is(err, policy.ErrUnsupportedFeedback),
+		errors.Is(err, policy.ErrDependencyCountUnknown),
+		errors.Is(err, policy.ErrDependencyCountZero),
+		errors.Is(err, policy.ErrNotArchived),
+		errors.Is(err, resolver.ErrUnsupportedReuseMode),
+		errors.Is(err, resolver.ErrReuseModeNotDeclared),
+		errors.Is(err, resolver.ErrDuplicateCandidateID):
+		return ExitUsage
+	default:
+		return ExitError
+	}
+}
+
+func (a *App) writeChooseText(stored resolver.StoredQualityDecision) {
+	decision := stored.Outcome.Decision
+	a.out("status: %s\n", decision.Status)
+	a.out("policy: %s\n", decision.PolicyID)
+	if stored.ResolutionID > 0 {
+		a.out("resolution_id: %d\n", stored.ResolutionID)
+	}
+
+	if resolution := decision.Resolution; resolution != nil {
+		a.out("outcome: %s\n", resolution.Outcome)
+		if resolution.SpecimenID != "" {
+			a.out("specimen: %s\n", resolution.SpecimenID)
+		}
+		a.out("resolved_at: %s\n", resolution.ResolvedAt.Format(time.RFC3339))
+		a.writeList("reasons", resolution.Reasons)
+		for _, rejected := range resolution.Rejected {
+			a.out("rejected:\n  %s\n", rejected.SpecimenID)
+			for _, reason := range rejected.Reasons {
+				a.out("    - %s\n", reason)
+			}
+		}
+		a.writeList("unknowns", resolution.Unknowns)
+		a.writeList("evidence_ids", resolution.EvidenceIDs)
+	}
+
+	if len(decision.Shortlist) == 0 {
+		a.out("shortlist: (none)\n")
+	} else {
+		a.out("shortlist:\n")
+		for index, candidate := range decision.Shortlist {
+			a.writeAssessment(index+1, candidate)
+		}
+	}
+
+	a.out("all candidates:\n")
+	for _, candidate := range decision.Assessments {
+		a.out("  %s (mode=%s, disposition=%s)\n", candidate.SpecimenID, candidate.ReuseMode, candidate.Disposition)
+	}
+
+	if len(stored.Outcome.AppliedFeedback) == 0 {
+		a.out("applied feedback: (none)\n")
+	} else {
+		a.out("applied feedback:\n")
+		for _, applied := range stored.Outcome.AppliedFeedback {
+			line := fmt.Sprintf("%s: %s", applied.CandidateID, applied.Reason)
+			if applied.Refinement != "" {
+				line += " (" + applied.Refinement + ")"
+			}
+			a.out("  - %s\n", line)
+			if applied.Warning != "" {
+				a.out("    warning: %s\n", applied.Warning)
+			}
+		}
+	}
+}
+
+func (a *App) writeAssessment(index int, candidate resolver.CandidateAssessment) {
+	a.out("  %d. %s\n", index, candidate.SpecimenID)
+	a.out("     mode: %s\n", candidate.ReuseMode)
+	a.out("     disposition: %s\n", candidate.Disposition)
+	if candidate.Source.URL != "" {
+		a.out("     source: %s\n", candidate.Source.URL)
+	}
+	if candidate.Source.Revision != "" {
+		a.out("     revision: %s\n", candidate.Source.Revision)
+	}
+	a.out("     licence: %s\n", factLicenceLine(candidate))
+	if len(candidate.Facts.Advisory.KnownIDs) > 0 {
+		a.out("     known_advisories: %s\n", strings.Join(candidate.Facts.Advisory.KnownIDs, ", "))
+	} else if candidate.Facts.Advisory.CountKnown {
+		a.out("     known_advisories: %d reported at observation time\n", candidate.Facts.Advisory.Count)
+	}
+	if candidate.Facts.Dependency.DirectCountKnown {
+		a.out("     direct_dependencies: %d\n", candidate.Facts.Dependency.DirectCount)
+	}
+	if candidate.Facts.Archived.Known {
+		a.out("     archived: %t\n", candidate.Facts.Archived.Archived)
+	}
+	if candidate.Facts.LastPush.Known {
+		a.out("     last_push: %s\n", candidate.Facts.LastPush.PushedAt.Format(time.RFC3339))
+	}
+	if candidate.Facts.Revision.Known {
+		a.out("     pinned_revision: %s\n", candidate.Facts.Revision.Revision)
+	}
+
+	a.out("     requirements:\n")
+	for _, requirement := range candidate.Behaviour.Requirements {
+		a.out("       %s=%s\n", requirement.RequirementID, requirement.Status)
+	}
+	a.out("     policy:\n")
+	for _, decision := range candidate.Policy {
+		a.out("       %s=%s: %s\n", decision.Dimension, decision.Action, decision.Reason)
+	}
+	a.writeTradeoffs("pros", candidate.Pros)
+	a.writeTradeoffs("cons", candidate.Cons)
+	a.writeTradeoffs("unknowns", candidate.Unknowns)
+}
+
+func (a *App) writeTradeoffs(label string, values []resolver.Tradeoff) {
+	if len(values) == 0 {
+		a.out("     %s: (none)\n", label)
+		return
+	}
+	a.out("     %s:\n", label)
+	for _, value := range values {
+		a.out("       - [%s] %s\n", value.Dimension, value.Message)
+	}
+}
+
+func factLicenceLine(candidate resolver.CandidateAssessment) string {
+	switch candidate.Facts.Licence.Status {
+	case policy.FactKnown:
+		if len(candidate.Facts.Licence.Values) == 1 {
+			return candidate.Facts.Licence.Values[0] + " (established)"
+		}
+		return strings.Join(candidate.Facts.Licence.Values, ", ")
+	case policy.FactMultiple:
+		return strings.Join(candidate.Facts.Licence.Values, ", ") + " (relationship not established)"
+	case policy.FactConflicting:
+		return strings.Join(candidate.Facts.Licence.Values, ", ") + " (conflicting observations)"
+	default:
+		return "not established"
+	}
 }
 
 // commandNormalize turns ordinary engineering language into an inspectable
@@ -801,6 +1218,10 @@ func (a *App) usage(w io.Writer) {
   reusery resolution --id N [--format text|json]     inspect a stored resolution
   reusery discover --profile FILE [--root DIR] [--format text|json]
                                                      run bounded public discovery
+  reusery enrich --request FILE [--root DIR] [--format text|json]
+                                                     record attributable metadata observations
+  reusery choose --request FILE --policy FILE [--feedback FILE] [--root DIR] [--format text|json]
+                                                     compare candidates under policy (offline)
   reusery normalize (--text STR | --file FILE) [--format text|json]
                                                      structure intent into a provisional contract
   reusery normalize-eval --corpus FILE [--format text|json]
@@ -844,6 +1265,40 @@ func readRequest(path string) (resolver.Request, error) {
 		return resolver.Request{}, fmt.Errorf("decode request %s: %w", path, err)
 	}
 	return request, nil
+}
+
+// readJSONUnder decodes a JSON document that must resolve beneath root,
+// rejecting unknown fields. It mirrors the catalogue and policy loaders so
+// every file input on the command line behaves the same way.
+func readJSONUnder(root, rel string, into any) error {
+	if strings.TrimSpace(rel) == "" {
+		return errors.New("an empty path was supplied")
+	}
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
+		return fmt.Errorf("%q is not relative to the repository root", rel)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve repository root: %w", err)
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	joined := filepath.Clean(filepath.Join(rootAbs, rel))
+	if joined != rootAbs && !strings.HasPrefix(joined, rootAbs+string(filepath.Separator)) {
+		return fmt.Errorf("%q escapes the repository root", rel)
+	}
+
+	file, err := os.Open(joined)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", joined, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
+		return fmt.Errorf("decode %s: %w", joined, err)
+	}
+	return nil
 }
 
 func openPostgresStore(ctx context.Context, cfg config.Config) (Store, func(), error) {

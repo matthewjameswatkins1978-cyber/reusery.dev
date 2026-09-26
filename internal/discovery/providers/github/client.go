@@ -74,6 +74,15 @@ func (c *Client) get(ctx context.Context, maxResponseBytes int64, path string, i
 	return api.GetJSON(ctx, path, c.headers(), into)
 }
 
+// Get issues one bounded authenticated-or-public GET against the fixed GitHub
+// host. Packet 7's metadata enrichment calls it so there is exactly one GitHub
+// HTTP stack: same token handling, same API version header, same rate-limit
+// fields, same safe redirects and the same rule that a token is only ever
+// placed in an Authorization header.
+func (c *Client) Get(ctx context.Context, maxResponseBytes int64, path string, into any) (httpx.Response, error) {
+	return c.get(ctx, maxResponseBytes, path, into)
+}
+
 // searchResult is the envelope both GitHub search endpoints share.
 type searchResult struct {
 	TotalCount        int  `json:"total_count"`

@@ -65,6 +65,7 @@ type Resolution struct {
 	Unknowns    []string
 	EvidenceIds []string
 	ResolvedAt  pgtype.Timestamptz
+	PolicyID    string
 }
 
 type Specimen struct {

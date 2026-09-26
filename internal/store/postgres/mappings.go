@@ -147,6 +147,7 @@ func resolutionToInsert(r model.Resolution) sqlc.InsertResolutionParams {
 		Reasons:     nonNilStrings(r.Reasons),
 		Unknowns:    nonNilStrings(r.Unknowns),
 		EvidenceIds: nonNilStrings(r.EvidenceIDs),
+		PolicyID:    r.PolicyID,
 		ResolvedAt:  timeToPg(r.ResolvedAt),
 	}
 }
@@ -177,6 +178,7 @@ func resolutionFromRows(row sqlc.Resolution, rejections []sqlc.Rejection) model.
 		Rejected:    rejected,
 		Unknowns:    nonNilStrings(row.Unknowns),
 		EvidenceIDs: nonNilStrings(row.EvidenceIds),
+		PolicyID:    row.PolicyID,
 		ResolvedAt:  row.ResolvedAt.Time,
 	}
 }

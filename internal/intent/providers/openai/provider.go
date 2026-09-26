@@ -31,10 +31,10 @@ const (
 	ID = "openai"
 	// Endpoint is the code-owned Responses API URL. It is not configurable.
 	Endpoint = "https://api.openai.com/v1/responses"
-	// DefaultModel is the Packet 6 default: intent normalisation is bounded
-	// structured work and Reusery has a first-class cost-saving objective.
-	// A stronger model is not automatically the better default.
-	DefaultModel = "gpt-5.6-luna"
+	// DefaultModel matches config.DefaultOpenAIModel: intent normalisation is
+	// bounded structured work and Reusery has a first-class cost-saving
+	// objective, so a stronger model is not automatically the better default.
+	DefaultModel = "gpt-6-luna"
 	// ReasoningEffort is fixed at low for the same reason.
 	ReasoningEffort = "low"
 

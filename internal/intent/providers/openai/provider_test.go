@@ -50,7 +50,7 @@ func serve(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) (
 		handler(w, r)
 	}))
 	t.Cleanup(server.Close)
-	return newProvider(testKey, "gpt-5.6-luna", server.URL+"/v1/responses", server.Client()), captured
+	return newProvider(testKey, "gpt-6-luna", server.URL+"/v1/responses", server.Client()), captured
 }
 
 // completedEnvelope is a realistic Responses API payload.
@@ -59,7 +59,7 @@ func completedEnvelope(text string) string {
 		"id": "resp_abc123",
 		"object": "response",
 		"status": "completed",
-		"model": "gpt-5.6-luna",
+		"model": "gpt-6-luna",
 		"output": [
 			{"type": "reasoning", "id": "rs_1", "summary": []},
 			{"type": "message", "id": "msg_1", "role": "assistant",
@@ -112,7 +112,7 @@ func TestIDAndProductionEndpointAreCodeOwned(t *testing.T) {
 
 func TestNewRejectsAMissingKeyWithoutEchoingAnything(t *testing.T) {
 	for _, key := range []string{"", "   "} {
-		provider, err := New(key, "gpt-5.6-luna")
+		provider, err := New(key, "gpt-6-luna")
 		if !errors.Is(err, ErrMissingKey) {
 			t.Errorf("New(%q) err = %v, want ErrMissingKey", key, err)
 		}
@@ -168,7 +168,7 @@ func TestGenerateSendsTheBoundedRequestShape(t *testing.T) {
 	}
 
 	body := captured.Body
-	if body["model"] != "gpt-5.6-luna" {
+	if body["model"] != "gpt-6-luna" {
 		t.Errorf("model = %v", body["model"])
 	}
 	if body["store"] != false {
@@ -268,7 +268,7 @@ func TestGenerateRecordsModelResponseIDAndUsage(t *testing.T) {
 	if response.StructuredJSON != `{"status":"ready","capability":"x"}` {
 		t.Errorf("structured output = %q", response.StructuredJSON)
 	}
-	if response.Model != "gpt-5.6-luna" {
+	if response.Model != "gpt-6-luna" {
 		t.Errorf("model = %q", response.Model)
 	}
 	if response.ResponseID != "resp_abc123" {
@@ -292,7 +292,7 @@ func TestGenerateFallsBackToTheConfiguredModelAndToleratesUnknownFields(t *testi
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if response.Model != "gpt-5.6-luna" {
+	if response.Model != "gpt-6-luna" {
 		t.Errorf("model = %q, want the configured model when the payload omits it", response.Model)
 	}
 }
@@ -503,7 +503,7 @@ func TestGenerateRejectsAnInvalidSchemaBeforeTheNetwork(t *testing.T) {
 		called = true
 	}))
 	t.Cleanup(server.Close)
-	provider := newProvider(testKey, "gpt-5.6-luna", server.URL, server.Client())
+	provider := newProvider(testKey, "gpt-6-luna", server.URL, server.Client())
 
 	request := testRequest()
 	request.JSONSchema = "{not json"

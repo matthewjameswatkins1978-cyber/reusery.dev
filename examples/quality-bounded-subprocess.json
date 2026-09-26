@@ -1,0 +1,14 @@
+{
+  "primitive_id": "process/bounded-subprocess",
+  "contract_id": "process/bounded-subprocess/v1",
+  "candidates": [
+    {
+      "specimen_id": "fixture/process/bounded-subprocess/complete-dependency",
+      "reuse_mode": "dependency"
+    },
+    {
+      "specimen_id": "fixture/process/bounded-subprocess/partial-adapt",
+      "reuse_mode": "adapt"
+    }
+  ]
+}

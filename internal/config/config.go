@@ -26,12 +26,17 @@ const (
 	EnvOpenAIModel  = "REUSERY_OPENAI_MODEL"
 )
 
-// DefaultOpenAIModel is the Packet 6 default model for intent normalisation.
+// DefaultOpenAIModel is the default model for intent normalisation.
+//
+// It is gpt-6-luna: the model that Packet 6's two successful release-gate
+// corpus runs actually used, the only model the evaluation account exposed,
+// and the efficient cost-sensitive model in current OpenAI documentation —
+// whose published token pricing is lower than the model it replaced.
 // Intent normalisation is bounded structured work and Reusery has a
 // first-class cost-saving objective, so the default is deliberately not the
 // strongest available model. An explicit override exists for evaluation and
 // future tuning.
-const DefaultOpenAIModel = "gpt-5.6-luna"
+const DefaultOpenAIModel = "gpt-6-luna"
 
 // Configuration errors. The database URL itself is never included, because it
 // may contain credentials.

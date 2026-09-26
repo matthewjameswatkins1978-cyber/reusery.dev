@@ -13,16 +13,33 @@ identify primitive / contract
       ↓
 discover candidate specimens
       ↓
-collect evidence + provenance
+enrich evidence
+      ↓
+extract facts
       ↓
 apply project policy
       ↓
-verify where necessary
+compare / select
+      ↓
+verify where unknown blocks direct use
       ↓
 resolve
       ↓
 remember decision
 ```
+
+Two rules sit underneath that flow.
+
+**UNKNOWN alone cannot justify BUILD LOCALLY.** When plausible candidates exist
+but their required behavioural evidence is missing, Reusery returns
+`NEEDS_VERIFICATION` and persists no resolution. Absence of evidence is never
+converted into "local code is better".
+
+**A policy decision is not Evidence.** Licence, advisory, dependency,
+maintenance and provenance rules are deterministic allow/review/deny
+statements about a project's constraints. They never satisfy, fail or refute a
+behavioural contract requirement, and no provider metadata can create a
+behavioural PASS.
 
 ## Inputs
 
@@ -65,7 +82,23 @@ These dimensions remain inspectable evidence. They are not reduced to a universa
 
 **REFERENCE**: implementation is useful engineering knowledge but should not be copied or depended upon directly.
 
+REFERENCE is not a weaker pass mark on the contract. It means the specimen is
+genuinely relevant, attributable and policy-clean enough to learn from, and
+that behavioural satisfaction has **not** been established — usually because
+required requirements remain UNKNOWN. A REFERENCE resolution says so
+explicitly: it never claims the implementation satisfies the complete
+behavioural contract, and it is only produced when there is no explicit
+required FAIL and no CONFLICTING evidence.
+
+REUSE, ADAPT and DEPEND remain strict: every required behavioural requirement
+must actually be satisfied **and** policy must permit the route.
+
 **BUILD LOCALLY**: existing candidates are worse under the stated constraints than a small local implementation.
+
+BUILD LOCALLY is justified only when there are no candidates, when every usable
+candidate is explicitly blocked by policy, when every usable candidate has
+required FAIL or CONFLICTING evidence, or when explicit constraints make reuse
+unsuitable. It is not the answer to "we do not yet have enough evidence".
 
 BUILD LOCALLY is not resolver failure.
 

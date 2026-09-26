@@ -18,14 +18,18 @@ The registry is memory. The resolver is the product.
 
 Early design and implementation. The repository currently holds the
 engineering foundation, persistence floor, the first complete resolution
-slice, the first public discovery layer, and natural-language intent
-normalisation: a production-shaped Go HTTP server with structured logging and
-health endpoints, a deterministic evidence evaluator and resolver kernel,
-PostgreSQL-backed storage for the core domain model, a CLI that can seed a
-catalogue, resolve a structured request and inspect the stored decision,
-`reusery discover`, which queries real public provider APIs (pkg.go.dev,
-GitHub) for plausible candidates, and `reusery normalize`, which turns an
-ordinary engineering request into an inspectable provisional contract draft.
+slice, the first public discovery layer, natural-language intent
+normalisation, and the evidence/policy/quality layer: a production-shaped Go
+HTTP server with structured logging and health endpoints, a deterministic
+evidence evaluator and resolver kernel, PostgreSQL-backed storage for the core
+domain model, a CLI that can seed a catalogue, resolve a structured request and
+inspect the stored decision, `reusery discover`, which queries real public
+provider APIs (pkg.go.dev, GitHub) for plausible candidates, `reusery enrich`,
+which records attributable licence/advisory/dependency/maintenance metadata,
+`reusery choose`, which compares candidates under an explicit policy and
+returns either a justified resolution or an honest `needs_verification`, and
+`reusery normalize`, which turns an ordinary engineering request into an
+inspectable provisional contract draft.
 See [VISION.md](VISION.md), [MODEL.md](MODEL.md), and [RESOLVER.md](RESOLVER.md)
 for the product design, and [docs/engineering.md](docs/engineering.md) for
 foundation decisions.
@@ -33,8 +37,8 @@ foundation decisions.
 ## Requirements
 
 - Go 1.27.1 (see [docs/engineering.md](docs/engineering.md) for toolchain notes)
-- PostgreSQL (required for serve, seed, resolve, resolution and discover;
-  **not** required for `normalize` or `normalize-eval`)
+- PostgreSQL (required for serve, seed, resolve, resolution, discover, enrich
+  and choose; **not** required for `normalize` or `normalize-eval`)
 - `golangci-lint` v2.14.0, `govulncheck` v1.8.0, `sqlc` v1.31.1 and
   `goose` v3.28.0 for the full check
 - Docker, only for the integration tests
@@ -56,7 +60,7 @@ REUSERY_LOG_LEVEL=info
 REUSERY_DATABASE_URL=postgres://reusery:reusery@localhost:5432/reusery?sslmode=disable
 REUSERY_GITHUB_TOKEN=            # optional, for GitHub discovery rate limits
 REUSERY_OPENAI_API_KEY=          # optional, only for normalize / normalize-eval
-REUSERY_OPENAI_MODEL=gpt-5.6-luna # optional model override
+REUSERY_OPENAI_MODEL=gpt-6-luna    # optional model override
 ```
 
 `REUSERY_DATABASE_URL` is required by every database-backed command and never
@@ -142,6 +146,62 @@ requirement. See [docs/public-discovery.md](docs/public-discovery.md).
 > `httptest` fixtures, so a provider outage cannot make CI red. Live calls are
 > a manual smoke procedure.
 
+## Enrichment and policy workflow
+
+Three further phases sit between "discovery found these" and "here is the route
+Reusery can justify":
+
+```powershell
+# 1. enrich: record attributable metadata observations (needs the internet)
+go run ./cmd/reusery enrich --root . `
+  --request examples/enrich-bounded-subprocess.json --format text
+
+# 2. choose: compare candidates under an explicit policy (OFFLINE)
+go run ./cmd/reusery choose --root . `
+  --request examples/quality-bounded-subprocess.json `
+  --policy policies/public-go-baseline-v1.yaml --format text
+
+# 3. choose again with structured "Not quite" feedback (still offline)
+go run ./cmd/reusery choose --root . `
+  --request examples/quality-bounded-subprocess.json `
+  --policy policies/public-go-baseline-v1.yaml `
+  --feedback examples/quality-feedback-not-quite.json --format json
+```
+
+`discover`, `enrich` and `choose` are **separate phases**:
+
+| Phase | Network | Output |
+| --- | --- | --- |
+| `discover` | yes | plausible specimens + relevance observations |
+| `enrich` | yes | attributable `INFO`/`UNKNOWN` metadata observations |
+| `choose` | **never** | shortlist + dispositions, and either a `Resolution` or `needs_verification` |
+
+Copy the specimen IDs printed by `discover` into your `--request` file: the
+example files under `examples/` are structural templates, and
+`quality-bounded-subprocess.json` ships with the deterministic seed fixtures so
+it works immediately after `seed`.
+
+What `choose` will and will not say:
+
+- **direct use** (`reuse`/`adapt`/`depend`) only when every required behavioural
+  requirement is actually satisfied *and* policy permits it;
+- **`reference`** when a candidate is relevant, attributable and policy-clean,
+  with `unknowns` preserved and an explicit statement that contract
+  satisfaction is **not** established;
+- **`needs_verification`** — with **nothing persisted** — when plausible
+  candidates exist but required behaviour is unknown. Absence of evidence never
+  becomes "build it locally";
+- **`build_locally`** only with a specific reason: no candidates, all denied by
+  policy, all explicitly failed, or all excluded by feedback.
+
+There is no quality score, no confidence value, no popularity ranking and no
+legal-advice or security-proof language anywhere in the output. See
+[docs/evidence-policy-resolution.md](docs/evidence-policy-resolution.md).
+
+> Automated tests never call deps.dev or GitHub: provider tests use `httptest`,
+> `choose` is offline by construction, and CI needs no provider credentials.
+> Live enrichment is a manual smoke procedure.
+
 ## Natural-language intent workflow
 
 Describe an engineering need in ordinary language and get back an inspectable
@@ -186,8 +246,9 @@ silently guessed.
 > normaliser tests use a fake provider. See
 > [docs/intent-normalisation.md](docs/intent-normalisation.md).
 
-> The default model is `gpt-5.6-luna`; it must be available on your OpenAI
-> account. If the provider reports `model_not_found`, set
+> The default model is `gpt-6-luna` — the model Packet 6's release-gate corpus
+> runs were validated against. It must still be available on your OpenAI
+> account; if the provider reports `model_not_found`, set
 > `REUSERY_OPENAI_MODEL` to a model your account exposes.
 
 ## Testing
@@ -244,21 +305,32 @@ scripts    developer automation
 - `internal/server` — HTTP server construction, routes and lifecycle.
 - `internal/version` — build metadata (linker-flag injectable).
 - `internal/model` — core domain model (Primitive, Contract, Specimen, Evidence, Resolution).
-- `internal/resolver` — deterministic evidence evaluation and the resolution
-  kernel (see [docs/evidence-evaluation.md](docs/evidence-evaluation.md) and
-  [docs/resolver-kernel.md](docs/resolver-kernel.md)).
+- `internal/resolver` — deterministic evidence evaluation, the resolution
+  kernel, and the Packet 7 quality layer (assessments, dispositions,
+  shortlisting and `needs_verification`) (see
+  [docs/evidence-evaluation.md](docs/evidence-evaluation.md),
+  [docs/resolver-kernel.md](docs/resolver-kernel.md) and
+  [docs/evidence-policy-resolution.md](docs/evidence-policy-resolution.md)).
 - `internal/catalog` — strict repository-authored YAML catalogue loading and
   seeding.
 - `internal/discovery` — bounded public discovery: profiles, budgets, provider
   interface, evidence rules and persistence (see
   [docs/public-discovery.md](docs/public-discovery.md)).
+- `internal/enrichment` — bounded metadata enrichment: budgets, provider
+  interface, evidence identity and trust rules; `internal/enrichment/providers/depsdev`
+  and `internal/enrichment/providers/githubmeta` are the first two providers.
+- `internal/policy` — typed fact extraction, strict policy profiles and
+  deterministic allow/review/deny evaluation, plus structured feedback
+  refinement. Never imports PostgreSQL.
+- `internal/benchmark` — benchmark record loading, pairing and measured-vs-
+  estimated aggregation (see [benchmarks/README.md](benchmarks/README.md)).
 - `internal/intent` — natural-language intent normalisation: domain types,
   versioned prompt and schema, deterministic validation, the single bounded
   repair, deterministic identifiers and the evaluation harness (see
   [docs/intent-normalisation.md](docs/intent-normalisation.md));
   `internal/intent/providers/openai` is the first model adapter.
 - `internal/cli` — the `reusery` commands (serve, seed, resolve, resolution,
-  discover, normalize, normalize-eval).
+  discover, enrich, choose, normalize, normalize-eval).
 - `internal/store/postgres` — PostgreSQL persistence (pgx pool, Goose
   migrations, hand-written sqlc mapping layer).
 
@@ -268,8 +340,10 @@ Source-shaped project assets live outside Go:
 - `contracts/` — behavioural contract definitions.
 - `catalogue/` — development seed bundles (fixtures, not recommendations).
 - `discovery/` — public discovery profiles.
-- `examples/` — example resolve requests and an example intent request.
+- `policies/` — authored policy profiles.
+- `examples/` — example resolve, enrich, choose and intent requests.
 - `evals/` — deterministic evaluation corpora.
+- `benchmarks/` — benchmark record format and (eventually) paired runs.
 
 ## Tooling
 

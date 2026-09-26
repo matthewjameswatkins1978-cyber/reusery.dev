@@ -125,7 +125,7 @@ between instructions and data is never obscured.
   mode).
 - `text.format.type: "json_schema"` with `strict: true` and the Packet 6
   authored schema.
-- Default model `gpt-5.6-luna`, overridable with `REUSERY_OPENAI_MODEL`.
+- Default model `gpt-6-luna`, overridable with `REUSERY_OPENAI_MODEL`.
   The actual model string returned by the provider is recorded in metadata.
   Intent normalisation is bounded structured work and Reusery has a
   first-class cost-saving objective: a stronger model is not automatically the
@@ -220,7 +220,7 @@ silently deleted**, so model quality stays visible and the repair is used.
 ```json
 "metadata": {
   "provider": "openai",
-  "model": "gpt-5.6-luna",
+  "model": "gpt-6-luna",
   "response_id": "resp_...",
   "prompt_version": "intent-normalizer/v1",
   "schema_version": 1,
