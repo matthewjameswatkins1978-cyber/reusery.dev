@@ -637,6 +637,116 @@ curl http://localhost:8080/v1/resolutions/1
 #    code external_operations_disabled, and no paid/provider call is made.
 ```
 
+## MCP agent interface and production CLI (Packet 9)
+
+Full reference: [docs/mcp.md](mcp.md). The agent-facing skill lives at
+[`skills/reusery/SKILL.md`](../skills/reusery/SKILL.md).
+
+**Dependency.** Exactly one new direct dependency:
+`github.com/modelcontextprotocol/go-sdk v1.8.0`, package `mcp` — the official
+SDK. Reusery does not hand-roll JSON-RPC, stdio framing, protocol negotiation,
+tool schema transport or cancellation. Transitive additions: `google/jsonschema-go`,
+`segmentio/encoding` + `segmentio/asm`, `yosida95/uritemplate/v3`,
+`golang.org/x/oauth2`, `golang.org/x/time`. No second MCP SDK, no agent
+framework, no LangChain, no custom JSON-RPC library.
+
+**Protocol.** The SDK negotiates the current revision `2026-07-28` plus the
+older revisions it advertises. Reusery does not parse protocol versions and is
+not pinned to one; a test forces `2025-11-25` through the SDK's own
+`ClientSessionOptions.ProtocolVersion` and requires the conversation to work.
+Packet 9 is a TOOLS server and does not use roots, sampling or protocol
+logging (deprecated in the 2026-07-28 revision), nor prompts or resources.
+
+**Transport: stdio only.** `reusery mcp` spawns nothing of its own; the agent
+host runs it as a child. stdout carries MCP frames and nothing else — no
+banner, no log, no diagnostics. Operational logging goes to stderr, enforced by
+a source-level test over the package's production files. Remote MCP is
+deliberately deferred: an unauthenticated, internet-facing, expensive MCP
+surface before Packet 13 (identity) and Packet 15 (abuse controls) would be the
+wrong thing to add, and Packet 8 already owns the remote HTTP surface. No
+`/mcp`, no `/mcp/sse`, no streamable handler, no MCP listener exists in
+production code.
+
+**Composition.** `internal/mcpserver` depends on `internal/app` interfaces
+only. It does not import `internal/store/postgres`, `internal/api` or
+`internal/intent`, and it never constructs a model provider — a calling agent
+is already the reasoning surface, so a second model call would be pure
+customer cost. `internal/app` gained `Catalog`, `OutcomeRecorder`,
+`ListCapabilities` and `NewOutcomeRecorder`, shared by the CLI, HTTP and MCP
+surfaces so provider and resolver construction is never duplicated.
+
+**Built-in baseline policy.** `policy.PublicGoBaseline()` returns the exact
+semantics of `policies/public-go-baseline-v1.yaml` so an installed binary can
+resolve outside a repository checkout without reading a working-directory
+file. `TestPublicGoBaselineMatchesAuthoredYAML` deep-equals the two; the YAML
+stays the authored human-readable profile and neither may drift.
+
+**Migration 00003_resolution_feedback.** Adds `resolution_feedback`
+(`id`, `resolution_id` FK `ON DELETE CASCADE`, `kind` with a CHECK over the
+five-value vocabulary, `note` with `char_length(note) <= 1000`, `recorded_at`)
+plus `resolution_feedback_order_idx` on `(resolution_id, recorded_at, id)`.
+Down drops the table. The migration lifecycle integration test covers
+zero → 00001 → 00002 → 00003 → down → up. No `agent_sessions`, `mcp_sessions`,
+`tool_calls`, `conversation_history` or `prompt_history`: MCP sessions are
+transport concerns.
+
+**Outcome feedback semantics.** Package `internal/outcome` is a domain type,
+not `model.Evidence`, because it does not mean what Evidence means. Note limit
+is **1000 characters (runes)**, documented because the database constraint is
+`char_length`, which counts characters. `Service.Report` confirms the
+Resolution exists first, then appends. Reporting never alters the Resolution,
+never creates Evidence, never changes a policy and never re-resolves. Notes are
+never logged. Packet 10 owns remembered project preferences.
+
+**MCP contract drift.**
+
+```bash
+go run ./cmd/mcpcontract -write mcp/reusery-tools-v1.json
+go run ./cmd/mcpcontract -check  mcp/reusery-tools-v1.json
+make mcp-contract
+make mcp-contract-check
+```
+
+`internal/mcpserver.Contract` builds the real server, connects an official-SDK
+client over in-memory transports, reads `tools/list` and renders a stable
+snapshot (contract version, server name, supported protocol revisions, and each
+tool's name, description, annotations, input and output schema — sorted by
+name). No PostgreSQL, no model key, no provider token, no network. Wired into
+`scripts/check.ps1`, `make check` and CI alongside the OpenAPI gate.
+
+**CLI additions (incremental, not a rewrite).** `reusery mcp`, `version`,
+`catalog`, `evidence`, `outcome`, `outcomes`. Every existing command still
+works.
+
+**CLI stdin rules.** A document argument of `-` reads standard input:
+`resolve --request -`, `enrich --request -`, `choose --request/-/--policy-/
+--feedback-`, `discover --profile -`, `normalize --file -`,
+`normalize-eval --corpus -`. Where a command accepts multiple document inputs,
+**at most one may be `-`**; `reusery choose --request - --policy -` returns
+exit code 2 rather than silently reading one stream twice. Ordinary file inputs
+keep every path-security check: choosing `-` changes where bytes come from,
+never where a path may reach. Supporting this added reader-shaped helpers
+(`policy.Decode`, `policy.DecodeFeedback`, `discovery.DecodeProfile`,
+`intent.LoadCorpusReader`); the path-based loaders now delegate to them with
+identical behaviour.
+
+**Exit codes (unchanged, now documented).** `0` successful product result,
+including `needs_verification`; `1` execution/configuration/provider/storage
+failure; `2` usage or structurally invalid input. `needs_verification` is never
+an exit-code failure.
+
+**Integration-test architecture.** `internal/mcpserver/integration_test.go`
+runs the real Packet 2 evaluator, Packet 3 store and Packet 7 quality service
+behind an MCP client over in-memory transports, with httptest pkg.go.dev,
+GitHub and deps.dev upstreams. `internal/mcpserver/stdio_test.go` compiles the
+actual `reusery` binary and drives it through the official SDK's
+`mcp.CommandTransport` against Testcontainers PostgreSQL with external
+operations disabled — the stdout-purity proof, since a stray line would break
+the handshake.
+
+**CI network policy.** CI may use Testcontainers PostgreSQL, in-memory MCP
+transports, local child processes and `httptest` upstreams. It must never call
+OpenAI, GitHub, pkg.go.dev or deps.dev.
 ## Quality checks
 
 ```powershell
@@ -644,6 +754,7 @@ gofmt -s -l -w .            # formatting (write)
 sqlc generate            # regenerate query code
 git diff --exit-code -- internal/store/postgres/sqlc   # drift check
 go run ./cmd/openapi -check openapi/reusery-v1.json    # OpenAPI drift check
+go run ./cmd/mcpcontract -check mcp/reusery-tools-v1.json  # MCP tool drift check
 go vet ./...             # static analysis
 go vet -tags=integration ./...
 go test ./...            # unit tests
@@ -652,6 +763,7 @@ golangci-lint run ./...  # lint (config: .golangci.yml)
 govulncheck ./...        # vulnerability scan
 go build ./cmd/reusery   # build
 go build ./cmd/openapi   # contract generator builds
+go build ./cmd/mcpcontract # MCP contract generator builds
 ```
 
 - `./scripts/check.ps1` runs all of the above on Windows; `make check`
@@ -669,7 +781,8 @@ go build ./cmd/openapi   # contract generator builds
 - CI (`.github/workflows/ci.yml`) uses current action majors:
   `actions/checkout@v6`, `actions/setup-go@v6` (Go 1.27.1),
   `golangci/golangci-lint-action@v9` (golangci-lint v2.14.0), plus
-  `govulncheck`, the sqlc drift check and the OpenAPI contract drift check.
+  `govulncheck`, the sqlc drift check, the OpenAPI contract drift check and the
+  MCP tool contract drift check.
 
 ## Tests
 
@@ -679,6 +792,22 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   the 65s write timeout) and `BaseContext` cancellation propagation, plus the
   graceful-shutdown lifecycle test. `/health` and `/ready` behaviour is
   asserted in `internal/api` now that routes live there.
+- `internal/mcpserver` — the exact 8-tool surface and no normalize/health/openapi
+  tool; tool annotations; server identity and bounded instructions; catalog list
+  and detail; discovery and enrichment gates with zero provider calls while
+  disabled; resolve producing DEPEND, REFERENCE, BUILD LOCALLY and
+  needs_verification through the real Packet 7 QualityService; refine applying
+  all six feedback reasons as genuine re-resolution; evidence continuation and
+  cursor validation; remembered-resolution inspection; append-only outcome
+  reporting that never mutates a Resolution or creates Evidence; stable error
+  codes with no secret leakage; payload byte budgets; the checked-in tool
+  contract (drift, annotations, no filesystem/credential inputs, no internal
+  schema names); official-SDK protocol negotiation including a forced legacy
+  revision; cancellation reaching the tool handler; source-level boundary tests
+  (stdio only, no HTTP transport, no model provider, no stdout writes).
+- `internal/outcome` — closed kind vocabulary, note boundary in characters,
+  unknown Resolution rejection, chronological append-only listing, and proof
+  that reporting changes neither Resolution, Evidence nor the decision.
 - `internal/api` — health/readiness (Packet 1 semantics preserved, including
   "health never runs a readiness checker"), middleware (request id accept /
   generate / replace, `Reusery-API-Version`, `Cache-Control: no-store`,

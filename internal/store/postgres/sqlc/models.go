@@ -68,6 +68,14 @@ type Resolution struct {
 	PolicyID    string
 }
 
+type ResolutionFeedback struct {
+	ID           int64
+	ResolutionID int64
+	Kind         string
+	Note         string
+	RecordedAt   pgtype.Timestamptz
+}
+
 type Specimen struct {
 	ID             string
 	PrimitiveID    string

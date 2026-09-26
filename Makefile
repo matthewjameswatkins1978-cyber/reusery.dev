@@ -7,7 +7,7 @@ APP_NAME := reusery
 MAIN := ./cmd/reusery
 SQLC_OUT := internal/store/postgres/sqlc
 
-.PHONY: format generate generate-check openapi openapi-check integration test vet lint vuln build build-all run check clean
+.PHONY: format generate generate-check openapi openapi-check mcp-contract mcp-contract-check integration test vet lint vuln build build-all run check clean
 
 format:
 	gofmt -s -l -w .
@@ -27,6 +27,14 @@ openapi:
 # Fail if API types or routes changed without regenerating the contract.
 openapi-check:
 	$(GO) run ./cmd/openapi -check openapi/reusery-v1.json
+
+# Regenerate the checked-in MCP tool contract from the registered server.
+mcp-contract:
+	$(GO) run ./cmd/mcpcontract -write mcp/reusery-tools-v1.json
+
+# Fail if a tool name, schema or annotation changed without regenerating it.
+mcp-contract-check:
+	$(GO) run ./cmd/mcpcontract -check mcp/reusery-tools-v1.json
 
 test:
 	$(GO) test ./...
@@ -53,7 +61,7 @@ build-all:
 run:
 	$(GO) run $(MAIN)
 
-check: format generate-check openapi-check vet test integration lint vuln build build-all
+check: format generate-check openapi-check mcp-contract-check vet test integration lint vuln build build-all
 
 clean:
 	rm -rf $(BIN_DIR)

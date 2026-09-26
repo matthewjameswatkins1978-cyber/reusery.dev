@@ -28,6 +28,11 @@ const (
 	// model tokens or external provider quota. It affects the HTTP API only:
 	// the equivalent CLI commands keep working regardless of its value.
 	EnvAPIEnableExternalOperations = "REUSERY_API_ENABLE_EXTERNAL_OPERATIONS"
+	// EnvMCPEnableExternalOperations gates the MCP discovery and enrichment
+	// tools. It is deliberately separate from the HTTP switch: neither surface
+	// silently enables the other, and an agent-facing protocol defaults to
+	// read-only until someone says otherwise.
+	EnvMCPEnableExternalOperations = "REUSERY_MCP_ENABLE_EXTERNAL_OPERATIONS"
 )
 
 // DefaultOpenAIModel is the default model for intent normalisation.
@@ -73,6 +78,13 @@ type Config struct {
 	// Offline HTTP operations (resolve, refine, inspection, health, ready) are
 	// unaffected, and so are the equivalent CLI commands.
 	APIEnableExternalOperations bool
+	// MCPEnableExternalOperations allows the MCP server to run reusery_discover
+	// and reusery_enrich, the only two tools that spend provider quota. It
+	// defaults to false: an agent-facing protocol must be read-only until it is
+	// explicitly enabled. catalog, resolve, refine, inspection and outcome
+	// reporting are unaffected, and so are the equivalent CLI commands and the
+	// separate HTTP switch.
+	MCPEnableExternalOperations bool
 }
 
 // ParseStrictBool parses an on/off environment value.
@@ -109,12 +121,17 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("config: %s: %w", EnvAPIEnableExternalOperations, err)
 	}
+	enableMCPExternal, err := ParseStrictBool(os.Getenv(EnvMCPEnableExternalOperations), false)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: %s: %w", EnvMCPEnableExternalOperations, err)
+	}
 	return Config{
 		HTTPAddr:                    envOr(EnvHTTPAddr, DefaultHTTPAddr),
 		LogLevel:                    ParseLogLevel(os.Getenv(EnvLogLevel)),
 		DatabaseURL:                 databaseURL,
 		GitHubToken:                 strings.TrimSpace(os.Getenv(EnvGitHubToken)),
 		APIEnableExternalOperations: enableExternal,
+		MCPEnableExternalOperations: enableMCPExternal,
 	}, nil
 }
 

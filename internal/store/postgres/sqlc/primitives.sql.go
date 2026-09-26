@@ -28,6 +28,39 @@ func (q *Queries) GetPrimitive(ctx context.Context, id string) (Primitive, error
 	return i, err
 }
 
+const listPrimitives = `-- name: ListPrimitives :many
+SELECT id, name, description, tags, contract_id
+FROM primitives
+ORDER BY id
+LIMIT $1
+`
+
+func (q *Queries) ListPrimitives(ctx context.Context, limit int32) ([]Primitive, error) {
+	rows, err := q.db.Query(ctx, listPrimitives, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Primitive{}
+	for rows.Next() {
+		var i Primitive
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.Tags,
+			&i.ContractID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertPrimitive = `-- name: UpsertPrimitive :one
 INSERT INTO primitives (id, name, description, tags, contract_id)
 VALUES ($1, $2, $3, $4, $5)

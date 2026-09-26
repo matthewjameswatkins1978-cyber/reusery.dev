@@ -56,6 +56,11 @@ type App struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
+	// Stdin backs the "-" document selector. Commands that read a request,
+	// profile, policy, feedback file or raw intent accept "-" to mean standard
+	// input so machine scripting does not need a temp file.
+	Stdin io.Reader
+
 	// LoadConfig reads configuration (defaults to config.Load).
 	LoadConfig func() (config.Config, error)
 	// LoadModelConfig reads model-provider configuration. It deliberately
@@ -94,6 +99,7 @@ func New() *App {
 	return &App{
 		Stdout:          os.Stdout,
 		Stderr:          os.Stderr,
+		Stdin:           os.Stdin,
 		LoadConfig:      config.Load,
 		LoadModelConfig: config.LoadModel,
 		OpenStore:       openPostgresStore,
@@ -136,6 +142,18 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.commandNormalize(ctx, args[1:])
 	case "normalize-eval":
 		return a.commandNormalizeEval(ctx, args[1:])
+	case "mcp":
+		return a.commandMCP(ctx, args[1:])
+	case "version":
+		return a.commandVersion(args[1:])
+	case "catalog":
+		return a.commandCatalog(ctx, args[1:])
+	case "evidence":
+		return a.commandEvidence(ctx, args[1:])
+	case "outcome":
+		return a.commandOutcome(ctx, args[1:])
+	case "outcomes":
+		return a.commandOutcomes(ctx, args[1:])
 	case "help", "-h", "--help":
 		a.usage(a.Stdout)
 		return ExitOK
@@ -233,7 +251,7 @@ func (a *App) commandResolve(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	request, err := readRequest(*requestPath)
+	request, err := a.readRequestDocument(*requestPath)
 	if err != nil {
 		a.errorf("reusery resolve: %v", err)
 		return ExitError
@@ -335,7 +353,7 @@ func (a *App) commandDiscover(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	profile, err := a.LoadProfile(*root, *profilePath)
+	profile, err := a.loadProfileDocument(*root, *profilePath)
 	if err != nil {
 		a.errorf("reusery discover: %v", err)
 		if errors.Is(err, discovery.ErrProfile) {
@@ -491,7 +509,7 @@ func (a *App) commandEnrich(ctx context.Context, args []string) int {
 	}
 
 	var request enrichRequest
-	if err := readJSONUnder(*root, *requestPath, &request); err != nil {
+	if err := a.readJSONDocument(*root, *requestPath, &request); err != nil {
 		a.errorf("reusery enrich: %v", err)
 		return ExitUsage
 	}
@@ -610,20 +628,29 @@ func (a *App) commandChoose(ctx context.Context, args []string) int {
 		a.errorf("reusery choose: invalid --format %q (want text or json)", *format)
 		return ExitUsage
 	}
+	// A process has one standard input, so at most one document may be "-".
+	if err := a.rejectMultipleStdin("reusery choose", map[string]string{
+		"--request":  *requestPath,
+		"--policy":   *policyPath,
+		"--feedback": *feedbackPath,
+	}); err != nil {
+		a.errorf("%v", err)
+		return ExitUsage
+	}
 
-	pol, err := a.LoadPolicy(*root, *policyPath)
+	pol, err := a.loadPolicyDocument(*root, *policyPath)
 	if err != nil {
 		a.errorf("reusery choose: %v", err)
 		return ExitUsage
 	}
 
 	var request resolver.QualityRequest
-	if err := readJSONUnder(*root, *requestPath, &request); err != nil {
+	if err := a.readJSONDocument(*root, *requestPath, &request); err != nil {
 		a.errorf("reusery choose: %v", err)
 		return ExitUsage
 	}
 	if *feedbackPath != "" {
-		feedback, err := a.LoadFeedback(*root, *feedbackPath)
+		feedback, err := a.loadFeedbackDocument(*root, *feedbackPath)
 		if err != nil {
 			a.errorf("reusery choose: %v", err)
 			return ExitUsage
@@ -854,12 +881,21 @@ func (a *App) commandNormalize(ctx context.Context, args []string) int {
 
 	raw := *text
 	if *file != "" {
-		data, err := os.ReadFile(*file)
-		if err != nil {
-			a.errorf("reusery normalize: cannot read %s: %v", *file, err)
-			return ExitUsage
+		if *file == stdinSelector {
+			data, err := io.ReadAll(a.Stdin)
+			if err != nil {
+				a.errorf("reusery normalize: cannot read standard input: %v", err)
+				return ExitUsage
+			}
+			raw = string(data)
+		} else {
+			data, err := os.ReadFile(*file)
+			if err != nil {
+				a.errorf("reusery normalize: cannot read %s: %v", *file, err)
+				return ExitUsage
+			}
+			raw = string(data)
 		}
-		raw = string(data)
 	}
 
 	cfg, err := a.LoadModelConfig()
@@ -917,7 +953,13 @@ func (a *App) commandNormalizeEval(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	corpus, err := a.LoadCorpus(*corpusPath)
+	var corpus intent.Corpus
+	var err error
+	if *corpusPath == stdinSelector {
+		corpus, err = intent.LoadCorpusReader(a.Stdin, stdinSelector)
+	} else {
+		corpus, err = a.LoadCorpus(*corpusPath)
+	}
 	if err != nil {
 		a.errorf("reusery normalize-eval: %v", err)
 		return ExitUsage
@@ -1176,7 +1218,20 @@ func (a *App) usage(w io.Writer) {
                                                      structure intent into a provisional contract
   reusery normalize-eval --corpus FILE [--format text|json]
                                                      run the intent evaluation corpus (PAID model calls)
+  reusery mcp                                        serve MCP over stdio for coding agents (needs PostgreSQL)
+  reusery version [--format text|json]               print build metadata
+  reusery catalog [--primitive-id ID] [--format text|json]
+                                                     list known capabilities, or inspect one
+  reusery evidence --subject-id ID [--limit N] [--after-observed-at T] [--after-id ID] [--format text|json]
+                                                     read a bounded page of stored evidence
+  reusery outcome --resolution-id N --kind KIND [--note TEXT] [--format text|json]
+                                                     record what happened after a resolution was used
+  reusery outcomes --resolution-id N [--limit N] [--format text|json]
+                                                     list recorded outcome events
   reusery help                                       show this help
+
+  Document arguments accept - to read standard input, for example:
+    reusery resolve --request - --format json
 `)
 }
 

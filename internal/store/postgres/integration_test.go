@@ -13,6 +13,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 )
 
@@ -222,14 +223,18 @@ func TestIntegrationMigrationLifecycle(t *testing.T) {
 	if columnExists(t, pool, "resolutions", "policy_id") {
 		t.Fatal("policy_id must not exist before 00002")
 	}
+	if tableExists(t, pool, "resolution_feedback") {
+		t.Fatal("resolution_feedback must not exist before 00003")
+	}
 	oldID := insertPrePolicyResolution(t, pool)
 
 	// 00001 -> 00002
-	if err := Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate up to 00002: %v", err)
-	}
+	migrateUpTo(t, pool, 2)
 	if !columnExists(t, pool, "resolutions", "policy_id") {
 		t.Fatal("policy_id missing after 00002")
+	}
+	if tableExists(t, pool, "resolution_feedback") {
+		t.Fatal("resolution_feedback must not exist before 00003")
 	}
 
 	store := NewStore(pool)
@@ -241,18 +246,30 @@ func TestIntegrationMigrationLifecycle(t *testing.T) {
 		t.Errorf("pre-00002 resolution PolicyID = %q, want empty", old.PolicyID)
 	}
 
-	// down: 00002 rolls back its own column and leaves 00001 intact.
+	// 00002 -> 00003
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate up to 00003: %v", err)
+	}
+	if !tableExists(t, pool, "resolution_feedback") {
+		t.Fatal("resolution_feedback missing after 00003")
+	}
+	feedbackID := insertFeedbackRow(t, pool, oldID)
+
+	// down: 00003 rolls back its own table and leaves 00001 and 00002 intact.
 	if err := MigrateDown(ctx, pool); err != nil {
 		t.Fatalf("migrate down: %v", err)
 	}
-	if columnExists(t, pool, "resolutions", "policy_id") {
-		t.Fatal("policy_id still present after migrate down")
+	if tableExists(t, pool, "resolution_feedback") {
+		t.Fatal("resolution_feedback still present after migrate down")
+	}
+	if !columnExists(t, pool, "resolutions", "policy_id") {
+		t.Fatal("policy_id must survive the 00003 rollback")
 	}
 	if !tableExists(t, pool, "primitives") {
-		t.Fatal("00001 must survive the 00002 rollback")
+		t.Fatal("00001 must survive the 00003 rollback")
 	}
 	if !tableExists(t, pool, "resolutions") {
-		t.Fatal("resolutions must survive the 00002 rollback")
+		t.Fatal("resolutions must survive the 00003 rollback")
 	}
 
 	// up again
@@ -265,9 +282,41 @@ func TestIntegrationMigrationLifecycle(t *testing.T) {
 	if !columnExists(t, pool, "resolutions", "policy_id") {
 		t.Fatal("policy_id missing after second migrate up")
 	}
+	if !tableExists(t, pool, "resolution_feedback") {
+		t.Fatal("resolution_feedback missing after second migrate up")
+	}
 	if _, err := store.GetResolution(ctx, oldID); err != nil {
 		t.Fatalf("pre-00002 resolution must survive down/up: %v", err)
 	}
+	// The feedback row lived in the rolled-back table, so it is gone with it:
+	// append-only history is never silently resurrected by a migration.
+	var feedbackCount int
+	if err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM resolution_feedback WHERE resolution_id = $1", oldID).Scan(&feedbackCount); err != nil {
+		t.Fatalf("count feedback: %v", err)
+	}
+	if feedbackCount != 0 {
+		t.Errorf("feedback rows = %d, want 0 after the 00003 rollback", feedbackCount)
+	}
+	_ = feedbackID
+}
+
+// insertFeedbackRow writes one outcome event so the 00003 rollback has
+// something real to drop.
+func insertFeedbackRow(t *testing.T, pool *pgxpool.Pool, resolutionID int64) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO resolution_feedback (resolution_id, kind, note, recorded_at)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id`,
+		resolutionID, "adopted", "recorded during the migration lifecycle test",
+		time.Date(2026, time.September, 26, 10, 0, 0, 0, time.UTC),
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert resolution feedback: %v", err)
+	}
+	return id
 }
 
 // insertPrePolicyResolution writes a resolution exactly as a Packet 1-6 binary
@@ -694,5 +743,72 @@ func TestIntegrationEvaluatorCompatibility(t *testing.T) {
 		if req.Status != expected {
 			t.Errorf("%s status = %q, want %q", req.RequirementID, req.Status, expected)
 		}
+	}
+}
+
+// Outcome feedback is append-only factual history: it round-trips in
+// chronological order and never alters the Resolution it reports on.
+func TestIntegrationOutcomeFeedbackRoundTrip(t *testing.T) {
+	store := newMigratedStore(t)
+	ctx := context.Background()
+
+	resolutionID, err := store.InsertResolution(ctx, model.Resolution{
+		PrimitiveID: "process/bounded-subprocess",
+		ContractID:  "process/bounded-subprocess/v1",
+		Outcome:     model.OutcomeDepend,
+		SpecimenID:  "fixture/process/bounded-subprocess/complete-dependency",
+		Reasons:     []string{"all required requirements satisfied"},
+		PolicyID:    "public-go-baseline/v1",
+		ResolvedAt:  time.Date(2026, time.September, 26, 9, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("insert resolution: %v", err)
+	}
+	before, err := store.GetResolution(ctx, resolutionID)
+	if err != nil {
+		t.Fatalf("load resolution: %v", err)
+	}
+
+	for index, kind := range []outcome.Kind{outcome.KindAdopted, outcome.KindIntegrationSucceeded} {
+		id, err := store.InsertFeedback(ctx, outcome.Feedback{
+			ResolutionID: resolutionID,
+			Kind:         kind,
+			Note:         "actual result " + string(kind),
+			RecordedAt:   time.Date(2026, time.September, 26, 10+index, 0, 0, 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("insert feedback %d: %v", index, err)
+		}
+		if id == 0 {
+			t.Error("inserted feedback has no identity")
+		}
+	}
+
+	events, err := store.ListFeedback(ctx, resolutionID, 10)
+	if err != nil {
+		t.Fatalf("list feedback: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
+	}
+	if events[0].Kind != outcome.KindAdopted || events[1].Kind != outcome.KindIntegrationSucceeded {
+		t.Errorf("events out of order: %v", events)
+	}
+	if events[0].Note == "" {
+		t.Error("note did not round-trip")
+	}
+
+	after, err := store.GetResolution(ctx, resolutionID)
+	if err != nil {
+		t.Fatalf("reload resolution: %v", err)
+	}
+	if after.Outcome != before.Outcome || after.PolicyID != before.PolicyID ||
+		!after.ResolvedAt.Equal(before.ResolvedAt) {
+		t.Errorf("reporting feedback changed the Resolution: %+v", after)
+	}
+
+	// A resolution that does not exist has no feedback.
+	if events, err := store.ListFeedback(ctx, 999, 10); err != nil || len(events) != 0 {
+		t.Errorf("unknown resolution: events=%v err=%v", events, err)
 	}
 }

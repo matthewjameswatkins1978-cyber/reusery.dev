@@ -355,6 +355,49 @@ go run ./cmd/openapi -write openapi/reusery-v1.json
 go run ./cmd/openapi -check  openapi/reusery-v1.json
 ```
 
+## Agent / MCP
+
+Reusery can serve the Model Context Protocol directly so a coding agent can
+check for an existing engineering route **before** writing code:
+
+```bash
+reusery mcp          # stdio only; requires PostgreSQL
+```
+
+Generic agent-host configuration:
+
+```json
+{
+  "mcpServers": {
+    "reusery": { "command": "reusery", "args": ["mcp"] }
+  }
+}
+```
+
+- **8 tools**, resolver-native: `reusery_catalog`, `reusery_discover`,
+  `reusery_enrich`, `reusery_resolve`, `reusery_refine`,
+  `reusery_inspect_evidence`, `reusery_inspect_resolution`,
+  `reusery_report_outcome`.
+- There is deliberately **no `reusery_normalize` tool**: the caller is already
+  an AI model, so a second model call would only add cost. The CLI and HTTP
+  normalise as before.
+- **`REUSERY_MCP_ENABLE_EXTERNAL_OPERATIONS=false` by default.** It gates only
+  `reusery_discover` and `reusery_enrich`, and is separate from
+  `REUSERY_API_ENABLE_EXTERNAL_OPERATIONS`. The CLI is unaffected by either.
+- stdout carries MCP frames only; logs go to stderr. There is no remote MCP
+  yet — see [docs/mcp.md](docs/mcp.md).
+
+The tool contract is generated and drift-checked like the OpenAPI one:
+
+```bash
+go run ./cmd/mcpcontract -check mcp/reusery-tools-v1.json
+```
+
+**Teach your agent when to use this**: [skills/reusery/SKILL.md](skills/reusery/SKILL.md)
+tells it to consider Reusery before reconstructing a likely-solved capability,
+and when not to bother.
+
+Full reference: [docs/mcp.md](docs/mcp.md).
 ## Architecture
 
 ```text
@@ -368,8 +411,13 @@ scripts    developer automation
 - `internal/api` — the stable HTTP/JSON API v1: transport DTOs, mapping,
   RFC 9457 errors, middleware and route registration (see
   [docs/http-api.md](docs/http-api.md)).
-- `internal/app` — shared composition root: the production factories the CLI
-  and the HTTP API both call.
+- `internal/app` — shared composition root: the production factories the CLI,
+  the HTTP API and the MCP server all call.
+- `internal/mcpserver` — the Model Context Protocol adapter over stdio. It maps
+  onto the same services and adds no resolver logic of its own (see
+  [docs/mcp.md](docs/mcp.md)).
+- `internal/outcome` — append-only factual post-resolution events. Not
+  Evidence, not policy, not a ranking signal.
 - `internal/server` — generic HTTP server lifecycle: timeouts, cancellation
   propagation and graceful shutdown. It owns no routes.
 - `internal/version` — build metadata (linker-flag injectable).
@@ -412,6 +460,8 @@ Source-shaped project assets live outside Go:
 - `policies/` — authored policy profiles.
 - `examples/` — example resolve, enrich, choose and intent requests.
 - `openapi/` — the checked-in, generated OpenAPI v1 contract.
+- `mcp/` — the checked-in, generated MCP tool contract.
+- `skills/` — agent skills (see [skills/reusery/SKILL.md](skills/reusery/SKILL.md)).
 - `evals/` — deterministic evaluation corpora.
 - `benchmarks/` — benchmark record format and (eventually) paired runs.
 

@@ -36,6 +36,8 @@ jobs:
           git diff --exit-code -- internal/store/postgres/sqlc
       - name: Check OpenAPI contract is current
         run: go run ./cmd/openapi -check openapi/reusery-v1.json
+      - name: Check MCP tool contract is current
+        run: go run ./cmd/mcpcontract -check mcp/reusery-tools-v1.json
       - name: Integration tests (real PostgreSQL via Testcontainers)
         run: go test -tags=integration ./...
 

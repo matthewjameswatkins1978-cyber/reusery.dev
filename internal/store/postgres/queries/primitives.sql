@@ -12,3 +12,9 @@ RETURNING *;
 SELECT *
 FROM primitives
 WHERE id = $1;
+
+-- name: ListPrimitives :many
+SELECT *
+FROM primitives
+ORDER BY id
+LIMIT $1;

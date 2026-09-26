@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,9 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/config"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store"
 )
 
 const (
@@ -95,6 +98,7 @@ type fakeStore struct {
 	specimens   map[string]model.Specimen
 	evidence    map[string]model.Evidence
 	resolutions []model.Resolution
+	feedback    []outcome.StoredFeedback
 }
 
 func newFakeStore() *fakeStore {
@@ -109,7 +113,7 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) GetPrimitive(_ context.Context, id string) (model.Primitive, error) {
 	value, ok := f.primitives[id]
 	if !ok {
-		return model.Primitive{}, fmt.Errorf("primitive %q not found", id)
+		return model.Primitive{}, fmt.Errorf("primitive %q not found: %w", id, store.ErrNotFound)
 	}
 	return value, nil
 }
@@ -117,7 +121,7 @@ func (f *fakeStore) GetPrimitive(_ context.Context, id string) (model.Primitive,
 func (f *fakeStore) GetContract(_ context.Context, id string) (model.Contract, error) {
 	value, ok := f.contracts[id]
 	if !ok {
-		return model.Contract{}, fmt.Errorf("contract %q not found", id)
+		return model.Contract{}, fmt.Errorf("contract %q not found: %w", id, store.ErrNotFound)
 	}
 	return value, nil
 }
@@ -125,7 +129,7 @@ func (f *fakeStore) GetContract(_ context.Context, id string) (model.Contract, e
 func (f *fakeStore) GetSpecimen(_ context.Context, id string) (model.Specimen, error) {
 	value, ok := f.specimens[id]
 	if !ok {
-		return model.Specimen{}, fmt.Errorf("specimen %q not found", id)
+		return model.Specimen{}, fmt.Errorf("specimen %q not found: %w", id, store.ErrNotFound)
 	}
 	return value, nil
 }
@@ -155,7 +159,7 @@ func (f *fakeStore) InsertResolution(_ context.Context, resolution model.Resolut
 
 func (f *fakeStore) GetResolution(_ context.Context, id int64) (model.Resolution, error) {
 	if id < 1 || id > int64(len(f.resolutions)) {
-		return model.Resolution{}, fmt.Errorf("resolution %d not found", id)
+		return model.Resolution{}, fmt.Errorf("resolution %d not found: %w", id, store.ErrNotFound)
 	}
 	return f.resolutions[id-1], nil
 }
@@ -188,6 +192,69 @@ func (f *fakeStore) FindEvidence(_ context.Context, id string) (model.Evidence, 
 	return value, ok, nil
 }
 
+// ListEvidenceAfter returns a bounded page in (observed_at, id) order.
+func (f *fakeStore) ListEvidenceAfter(_ context.Context, subjectID string, after time.Time, afterID string, limit int) ([]model.Evidence, error) {
+	all, err := f.ListEvidenceBySubject(context.Background(), subjectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Evidence, 0, limit)
+	for _, item := range all {
+		if !after.IsZero() && (item.ObservedAt.Before(after) ||
+			(item.ObservedAt.Equal(after) && item.ID <= afterID)) {
+			continue
+		}
+		if len(out) == limit {
+			break
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// ListPrimitives returns seeded primitives in id order.
+func (f *fakeStore) ListPrimitives(_ context.Context, limit int) ([]model.Primitive, error) {
+	if limit <= 0 {
+		return []model.Primitive{}, nil
+	}
+	ids := make([]string, 0, len(f.primitives))
+	for id := range f.primitives {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]model.Primitive, 0, len(ids))
+	for _, id := range ids {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, f.primitives[id])
+	}
+	return out, nil
+}
+
+// InsertFeedback appends one post-resolution event.
+func (f *fakeStore) InsertFeedback(_ context.Context, value outcome.Feedback) (int64, error) {
+	f.feedback = append(f.feedback, outcome.StoredFeedback{
+		ID:       int64(len(f.feedback) + 1),
+		Feedback: value,
+	})
+	return int64(len(f.feedback)), nil
+}
+
+// ListFeedback returns stored post-resolution events in chronological order.
+func (f *fakeStore) ListFeedback(_ context.Context, resolutionID int64, limit int) ([]outcome.StoredFeedback, error) {
+	out := make([]outcome.StoredFeedback, 0, limit)
+	for _, event := range f.feedback {
+		if event.ResolutionID == resolutionID {
+			out = append(out, event)
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 // testApp wires a CLI against the real repository catalogue and a fake store.
 func testApp(t *testing.T) (*App, *bytes.Buffer, *bytes.Buffer, *fakeStore) {
 	t.Helper()
@@ -207,6 +274,7 @@ func testApp(t *testing.T) (*App, *bytes.Buffer, *bytes.Buffer, *fakeStore) {
 	app := &App{
 		Stdout: stdout,
 		Stderr: stderr,
+		Stdin:  strings.NewReader(""),
 		LoadConfig: func() (config.Config, error) {
 			return config.Config{
 				HTTPAddr:    ":0",

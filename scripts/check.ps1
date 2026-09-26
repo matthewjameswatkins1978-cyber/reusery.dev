@@ -30,8 +30,10 @@ Invoke-Step 'go test -tags=integration ./...'
 Invoke-Step 'golangci-lint run ./...'
 Invoke-Step 'govulncheck ./...'
 Invoke-Step 'go run ./cmd/openapi -check openapi/reusery-v1.json'
+Invoke-Step 'go run ./cmd/mcpcontract -check mcp/reusery-tools-v1.json'
 Invoke-Step 'go build ./cmd/reusery'
 Invoke-Step 'go build ./cmd/openapi'
+Invoke-Step 'go build ./cmd/mcpcontract'
 
 Write-Host ""
 Write-Host "All checks passed."

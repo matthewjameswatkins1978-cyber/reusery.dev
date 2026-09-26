@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,12 +47,20 @@ func LoadProfile(root, profilePath string) (Profile, error) {
 	if err != nil {
 		return Profile{}, fmt.Errorf("%w: read %s: %v", ErrProfile, profilePath, err)
 	}
+	return DecodeProfile(bytes.NewReader(data), profilePath)
+}
 
+// DecodeProfile reads one discovery profile from r. label names the source in
+// error messages: a profile path, or "-" for standard input.
+//
+// Decoding is strict (unknown fields are rejected, so a typo never silently
+// disables part of a plan) and the profile is validated before it is used.
+func DecodeProfile(r io.Reader, label string) (Profile, error) {
 	var profile Profile
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(r)
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&profile); err != nil {
-		return Profile{}, fmt.Errorf("%w: decode %s: %v", ErrProfile, profilePath, err)
+		return Profile{}, fmt.Errorf("%w: decode %s: %v", ErrProfile, label, err)
 	}
 
 	if profile.SchemaVersion != SchemaVersion {

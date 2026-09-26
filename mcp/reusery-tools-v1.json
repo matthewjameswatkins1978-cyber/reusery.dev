@@ -1,0 +1,2048 @@
+{
+  "contract_version": 1,
+  "server_name": "reusery",
+  "protocol_versions": [
+    "2026-07-28",
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05"
+  ],
+  "tools": [
+    {
+      "name": "reusery_catalog",
+      "description": "List the engineering capabilities Reusery knows, or inspect one primitive with its contract and ordered requirements. Read-only capability discovery, not a registry dump.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "primitive_id": {
+            "description": "Opaque Reusery primitive id. Omit to list the known capabilities instead.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "additionalProperties": false,
+            "description": "The requested contract, or null in list mode.",
+            "properties": {
+              "contract_id": {
+                "description": "Opaque Reusery contract id.",
+                "type": "string"
+              },
+              "primitive_id": {
+                "description": "Owning primitive id.",
+                "type": "string"
+              },
+              "requirements": {
+                "description": "Requirements in authored order; never null.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "description": "The claim.",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "Requirement kind from the intent vocabulary.",
+                      "type": "string"
+                    },
+                    "required": {
+                      "description": "Whether satisfaction is mandatory for direct reuse.",
+                      "type": "boolean"
+                    },
+                    "requirement_id": {
+                      "description": "Opaque requirement id.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requirement_id",
+                    "description",
+                    "kind",
+                    "required"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "summary": {
+                "description": "One-paragraph summary.",
+                "type": "string"
+              },
+              "version": {
+                "description": "Contract version.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract_id",
+              "primitive_id",
+              "version",
+              "summary",
+              "requirements"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "primitive": {
+            "additionalProperties": false,
+            "description": "The requested primitive, or null in list mode.",
+            "properties": {
+              "contract_id": {
+                "description": "The contract that describes this primitive.",
+                "type": "string"
+              },
+              "contract_summary": {
+                "description": "One-paragraph contract summary, empty when the contract is not stored.",
+                "type": "string"
+              },
+              "description": {
+                "description": "What the capability means.",
+                "type": "string"
+              },
+              "name": {
+                "description": "Human-readable capability name.",
+                "type": "string"
+              },
+              "primitive_id": {
+                "description": "Opaque Reusery primitive id.",
+                "type": "string"
+              },
+              "tags": {
+                "description": "Free-form tags; never null.",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "primitive_id",
+              "name",
+              "description",
+              "contract_id",
+              "contract_summary",
+              "tags"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "primitives": {
+            "description": "Capability list; empty in detail mode.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contract_id": {
+                  "description": "The contract that describes this primitive.",
+                  "type": "string"
+                },
+                "contract_summary": {
+                  "description": "One-paragraph contract summary, empty when the contract is not stored.",
+                  "type": "string"
+                },
+                "description": {
+                  "description": "What the capability means.",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Human-readable capability name.",
+                  "type": "string"
+                },
+                "primitive_id": {
+                  "description": "Opaque Reusery primitive id.",
+                  "type": "string"
+                },
+                "tags": {
+                  "description": "Free-form tags; never null.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "primitive_id",
+                "name",
+                "description",
+                "contract_id",
+                "contract_summary",
+                "tags"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "primitives",
+          "primitive",
+          "contract"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_discover",
+      "description": "Discover plausible public specimens for a known primitive and contract through the bounded Packet 5 providers. Provider data is INFO/UNKNOWN only: discovery is not verification and can never produce behavioural evidence.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_id": {
+            "type": "string"
+          },
+          "primitive_id": {
+            "type": "string"
+          },
+          "providers": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "queries": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "limit": {
+                        "type": "integer"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "limit"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "queries"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "schema_version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "primitive_id",
+          "contract_id",
+          "providers"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "description": "Discovered candidates; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "description": "Human-readable specimen name.",
+                  "type": "string"
+                },
+                "provider_id": {
+                  "description": "Provider that surfaced it.",
+                  "type": "string"
+                },
+                "reuse_modes": {
+                  "description": "Reuse modes the specimen declares; never null.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "revision": {
+                  "description": "Pinned revision when one is known.",
+                  "type": "string"
+                },
+                "source_url": {
+                  "description": "Attributable source URL.",
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "description": "Opaque Reusery specimen id.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "name",
+                "provider_id",
+                "reuse_modes",
+                "source_url",
+                "revision"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "contract_id": {
+            "description": "Contract discovered for.",
+            "type": "string"
+          },
+          "observed_at": {
+            "description": "Observation time for this run.",
+            "type": "string"
+          },
+          "primitive_id": {
+            "description": "Primitive discovered for.",
+            "type": "string"
+          },
+          "providers": {
+            "description": "Per-provider reports including partial failures; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_count": {
+                  "description": "Candidates returned.",
+                  "type": "integer"
+                },
+                "id": {
+                  "description": "Provider id.",
+                  "type": "string"
+                },
+                "incomplete": {
+                  "description": "Whether results were truncated.",
+                  "type": "boolean"
+                },
+                "issues": {
+                  "description": "Safe provider issues; never null.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "description": "Issue kind.",
+                        "type": "string"
+                      },
+                      "message": {
+                        "description": "Safe human-readable explanation.",
+                        "type": "string"
+                      },
+                      "provider": {
+                        "description": "Provider that raised it.",
+                        "type": "string"
+                      },
+                      "query": {
+                        "description": "Query involved, when applicable.",
+                        "type": "string"
+                      },
+                      "status_code": {
+                        "description": "Upstream status code, when one exists.",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "provider",
+                      "query",
+                      "status_code",
+                      "message"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "requests": {
+                  "description": "HTTP requests made.",
+                  "type": "integer"
+                },
+                "succeeded": {
+                  "description": "Whether the provider completed without operational failure.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "succeeded",
+                "requests",
+                "candidate_count",
+                "incomplete",
+                "issues"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "primitive_id",
+          "contract_id",
+          "observed_at",
+          "candidates",
+          "providers"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_enrich",
+      "description": "Record attributable licence, advisory, dependency and maintenance metadata for discovered specimens. Metadata is never behavioural evidence and can never satisfy a contract requirement.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "specimen_ids": {
+            "description": "Opaque Reusery specimen ids to enrich; must be non-empty, unique and within the run budget.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "specimen_ids"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "description": "Total new observations recorded across all specimens.",
+            "type": "integer"
+          },
+          "observed_at": {
+            "description": "Observation time for this run.",
+            "type": "string"
+          },
+          "specimens": {
+            "description": "Per-specimen reports; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "evidence_count": {
+                  "description": "Observations recorded for this specimen.",
+                  "type": "integer"
+                },
+                "providers": {
+                  "description": "Per-provider reports; never null.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "evidence_count": {
+                        "description": "Observations recorded.",
+                        "type": "integer"
+                      },
+                      "id": {
+                        "description": "Provider id.",
+                        "type": "string"
+                      },
+                      "issues": {
+                        "description": "Safe provider issues; never null.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "description": "Issue kind.",
+                              "type": "string"
+                            },
+                            "message": {
+                              "description": "Safe human-readable explanation.",
+                              "type": "string"
+                            },
+                            "provider": {
+                              "description": "Provider that raised it.",
+                              "type": "string"
+                            },
+                            "status_code": {
+                              "description": "Upstream status code, when one exists.",
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "provider",
+                            "status_code",
+                            "message"
+                          ],
+                          "type": "object"
+                        },
+                        "type": [
+                          "null",
+                          "array"
+                        ]
+                      },
+                      "requests": {
+                        "description": "HTTP requests made.",
+                        "type": "integer"
+                      },
+                      "succeeded": {
+                        "description": "Whether the provider completed without operational failure.",
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "succeeded",
+                      "requests",
+                      "evidence_count",
+                      "issues"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "specimen_id": {
+                  "description": "Specimen enriched.",
+                  "type": "string"
+                },
+                "supported": {
+                  "description": "Whether any provider supported this specimen.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "supported",
+                "evidence_count",
+                "providers"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "observed_at",
+          "evidence",
+          "specimens"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_inspect_evidence",
+      "description": "Read a bounded, ordered page of stored evidence for one subject. Call this only when uncertainty actually matters; claims are returned unabridged.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "additionalProperties": false,
+            "description": "Continuation key from a previous page; omit for the first page.",
+            "properties": {
+              "evidence_id": {
+                "description": "id of the last returned record.",
+                "type": "string"
+              },
+              "observed_at": {
+                "description": "observed_at of the last returned record.",
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "limit": {
+            "description": "Page size; defaults to 20 and may not exceed 50.",
+            "type": "integer"
+          },
+          "subject_id": {
+            "description": "Opaque Reusery specimen id whose evidence is wanted.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "description": "Observations ordered by observed_at then id; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "applies_to": {
+                  "description": "Requirement id this observation applies to; empty for non-behavioural evidence.",
+                  "type": "string"
+                },
+                "claim": {
+                  "description": "The observed claim, unabridged.",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "Opaque evidence id.",
+                  "type": "string"
+                },
+                "kind": {
+                  "description": "Observation kind.",
+                  "type": "string"
+                },
+                "methodology": {
+                  "description": "How the observation was obtained.",
+                  "type": "string"
+                },
+                "observed_at": {
+                  "description": "When the observation was recorded.",
+                  "type": "string"
+                },
+                "result": {
+                  "description": "pass, fail, unknown or info.",
+                  "type": "string"
+                },
+                "source": {
+                  "additionalProperties": false,
+                  "description": "Attributable source.",
+                  "properties": {
+                    "license": {
+                      "description": "Declared licence when the source declares one.",
+                      "type": "string"
+                    },
+                    "path": {
+                      "description": "Path within the source when applicable.",
+                      "type": "string"
+                    },
+                    "revision": {
+                      "description": "Pinned revision when one is known.",
+                      "type": "string"
+                    },
+                    "url": {
+                      "description": "Attributable source URL.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "revision",
+                    "path",
+                    "license"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "claim",
+                "result",
+                "source",
+                "observed_at",
+                "applies_to",
+                "methodology"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "limit": {
+            "description": "Page size used.",
+            "type": "integer"
+          },
+          "next_after": {
+            "additionalProperties": false,
+            "description": "Continuation key for the next page, or null when the page is the last one.",
+            "properties": {
+              "evidence_id": {
+                "description": "id of the last returned record.",
+                "type": "string"
+              },
+              "observed_at": {
+                "description": "observed_at of the last returned record.",
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "subject_id": {
+            "description": "Subject the page belongs to.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "evidence",
+          "limit",
+          "next_after"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_inspect_resolution",
+      "description": "Read a remembered Resolution exactly as recorded, together with any outcome events reported against it. Never re-evaluates current evidence.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "resolution_id": {
+            "description": "PostgreSQL storage identity of the resolution.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resolution_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome_feedback": {
+            "description": "Post-resolution events in chronological order; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Storage identity of this event.",
+                  "type": "integer"
+                },
+                "kind": {
+                  "description": "adopted, rejected, integration_succeeded, integration_failed or abandoned.",
+                  "type": "string"
+                },
+                "note": {
+                  "description": "Optional caller-supplied note; never logged.",
+                  "type": "string"
+                },
+                "recorded_at": {
+                  "description": "When the event was recorded.",
+                  "type": "string"
+                },
+                "resolution_id": {
+                  "description": "Resolution this event reports on.",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "resolution_id",
+                "kind",
+                "note",
+                "recorded_at"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "resolution": {
+            "additionalProperties": false,
+            "description": "The remembered decision, not re-evaluated.",
+            "properties": {
+              "contract_id": {
+                "description": "Contract resolved.",
+                "type": "string"
+              },
+              "evidence_ids": {
+                "description": "Evidence consulted; never null.",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "outcome": {
+                "description": "reuse, adapt, depend, reference or build_locally.",
+                "type": "string"
+              },
+              "policy_id": {
+                "description": "Policy profile that justified the decision.",
+                "type": "string"
+              },
+              "primitive_id": {
+                "description": "Primitive resolved.",
+                "type": "string"
+              },
+              "reasons": {
+                "description": "Deterministic reasons; never null.",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "rejected": {
+                "description": "Negative knowledge preserved; never null.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasons": {
+                      "description": "Why it was rejected; never null.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "specimen_id": {
+                      "description": "Rejected candidate.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "specimen_id",
+                    "reasons"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "resolved_at": {
+                "description": "When the decision was recorded.",
+                "type": "string"
+              },
+              "specimen_id": {
+                "description": "Selected specimen, empty for build_locally.",
+                "type": "string"
+              },
+              "unknowns": {
+                "description": "Unresolved required requirements; never null.",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "primitive_id",
+              "contract_id",
+              "outcome",
+              "specimen_id",
+              "reasons",
+              "rejected",
+              "unknowns",
+              "evidence_ids",
+              "policy_id",
+              "resolved_at"
+            ],
+            "type": "object"
+          },
+          "resolution_id": {
+            "description": "Storage identity of the resolution.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resolution_id",
+          "resolution",
+          "outcome_feedback"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_refine",
+      "description": "Reject a result with a supported structured reason and re-resolve. Stateless: resend the original base policy, the same bounded candidate set and the complete accumulated feedback history.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "description": "The bounded candidate set; send [] when there are none.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reuse_mode": {
+                  "description": "Reuse mode under consideration: copy, dependency, adapt or reference.",
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "description": "Opaque Reusery specimen id.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "reuse_mode"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "contract_id": {
+            "description": "Contract being resolved.",
+            "type": "string"
+          },
+          "feedback": {
+            "description": "Complete accumulated feedback history using the supported vocabulary: not_quite, too_many_dependencies, licence_not_allowed, avoid_dependency, avoid_reference, archived_project. At least one item.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "candidate_id",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "policy": {
+            "additionalProperties": false,
+            "description": "The ORIGINAL base policy, not a previously derived effective policy. Omit for the built-in baseline.",
+            "properties": {
+              "dependencies": {
+                "additionalProperties": false,
+                "description": "Dependency burden rules.",
+                "properties": {
+                  "max_direct": {
+                    "description": "Maximum permitted direct dependencies. Omit for no quantity rule.",
+                    "type": [
+                      "null",
+                      "integer"
+                    ]
+                  },
+                  "unknown": {
+                    "description": "Action when the dependency count is unknown.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "unknown"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "description": "Policy profile identifier recorded on the resolution.",
+                "type": "string"
+              },
+              "license": {
+                "additionalProperties": false,
+                "description": "Licence rules.",
+                "properties": {
+                  "allow": {
+                    "description": "Exact licence expressions that are allowed; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "deny": {
+                    "description": "Exact licence expressions that are denied; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "multiple": {
+                    "description": "Action when several licence expressions are observed.",
+                    "type": "string"
+                  },
+                  "unknown": {
+                    "description": "Action when no licence is established.",
+                    "type": "string"
+                  },
+                  "unlisted": {
+                    "description": "Action when the licence is known but not listed.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "allow",
+                  "deny",
+                  "unknown",
+                  "multiple",
+                  "unlisted"
+                ],
+                "type": "object"
+              },
+              "maintenance": {
+                "additionalProperties": false,
+                "description": "Maintenance rules.",
+                "properties": {
+                  "archived": {
+                    "description": "Action when the source repository is archived.",
+                    "type": "string"
+                  },
+                  "deprecated": {
+                    "description": "Action when the package is deprecated.",
+                    "type": "string"
+                  },
+                  "max_days_since_push": {
+                    "description": "Staleness window in days. Omit to disable the rule.",
+                    "type": [
+                      "null",
+                      "integer"
+                    ]
+                  },
+                  "max_days_since_release": {
+                    "description": "Release age window in days. Omit to disable the rule.",
+                    "type": [
+                      "null",
+                      "integer"
+                    ]
+                  },
+                  "stale": {
+                    "description": "Action when the last push exceeds the configured window.",
+                    "type": "string"
+                  },
+                  "unknown": {
+                    "description": "Action when a configured maintenance fact is unknown.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "archived",
+                  "deprecated",
+                  "stale",
+                  "unknown"
+                ],
+                "type": "object"
+              },
+              "reuse": {
+                "additionalProperties": false,
+                "description": "Reuse mode rules.",
+                "properties": {
+                  "allowed": {
+                    "description": "Reuse modes the policy permits; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "preferred": {
+                    "description": "Permitted modes in preference order; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  }
+                },
+                "required": [
+                  "allowed",
+                  "preferred"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "description": "Policy schema version; must be 1.",
+                "type": "integer"
+              },
+              "security": {
+                "additionalProperties": false,
+                "description": "Advisory rules.",
+                "properties": {
+                  "known_advisory": {
+                    "description": "Action when a known advisory identifier was reported.",
+                    "type": "string"
+                  },
+                  "unknown": {
+                    "description": "Action when the advisory picture is unknown.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "known_advisory",
+                  "unknown"
+                ],
+                "type": "object"
+              },
+              "selection": {
+                "additionalProperties": false,
+                "description": "Selection bounds.",
+                "properties": {
+                  "max_options": {
+                    "description": "Maximum number of candidates in the shortlist.",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "max_options"
+                ],
+                "type": "object"
+              },
+              "source": {
+                "additionalProperties": false,
+                "description": "Provenance rules.",
+                "properties": {
+                  "missing_revision": {
+                    "description": "Action when a required revision is missing.",
+                    "type": "string"
+                  },
+                  "require_revision_for": {
+                    "description": "Reuse modes that require a pinned revision; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  }
+                },
+                "required": [
+                  "require_revision_for",
+                  "missing_revision"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "schema_version",
+              "id",
+              "reuse",
+              "license",
+              "security",
+              "dependencies",
+              "maintenance",
+              "source",
+              "selection"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "primitive_id": {
+            "description": "Primitive being resolved.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "primitive_id",
+          "contract_id",
+          "candidates",
+          "feedback"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "applied_feedback": {
+            "description": "Feedback the server actually applied; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "refinement": {
+                  "type": "string"
+                },
+                "warning": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "candidate_id",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "effective_policy": {
+            "additionalProperties": false,
+            "description": "Policy actually applied, after refinement.",
+            "properties": {
+              "allowed_reuse_modes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "archived_action": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "licence_allow": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "licence_deny": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "max_days_since_push": {
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "max_days_since_release": {
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "max_direct": {
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "max_options": {
+                "type": "integer"
+              },
+              "preferred_reuse_modes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "schema_version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "schema_version",
+              "allowed_reuse_modes",
+              "archived_action",
+              "max_options"
+            ],
+            "type": "object"
+          },
+          "outcome": {
+            "description": "reuse, adapt, depend, reference or build_locally; null when nothing was persisted.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "policy_id": {
+            "description": "Policy profile identifier.",
+            "type": "string"
+          },
+          "reasons": {
+            "description": "Deterministic reasons for the decision; empty when nothing was persisted.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "rejected": {
+            "description": "Negative knowledge preserved on the resolution; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reasons": {
+                  "description": "Why it was rejected; never null.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "specimen_id": {
+                  "description": "Rejected candidate.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "reasons"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "resolution_id": {
+            "description": "Persisted resolution identity, or null when nothing was persisted.",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "selected": {
+            "additionalProperties": false,
+            "description": "Selected candidate, or null.",
+            "properties": {
+              "disposition": {
+                "description": "Why this candidate could be used.",
+                "type": "string"
+              },
+              "license": {
+                "description": "Declared licence when the source declares one.",
+                "type": "string"
+              },
+              "reuse_mode": {
+                "description": "Reuse mode selected.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Pinned revision when one is known.",
+                "type": "string"
+              },
+              "source_url": {
+                "description": "Attributable source URL.",
+                "type": "string"
+              },
+              "specimen_id": {
+                "description": "Opaque Reusery specimen id.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "specimen_id",
+              "reuse_mode",
+              "disposition",
+              "source_url",
+              "revision",
+              "license"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "shortlist": {
+            "description": "Ranked alternatives; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "disposition": {
+                  "description": "Why this candidate could or could not be used.",
+                  "type": "string"
+                },
+                "reuse_mode": {
+                  "description": "Reuse mode considered.",
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "description": "Opaque Reusery specimen id.",
+                  "type": "string"
+                },
+                "unknown_requirements": {
+                  "description": "Required requirement ids still behaviourally unknown; never null.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "specimen_id",
+                "reuse_mode",
+                "disposition",
+                "unknown_requirements"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "status": {
+            "description": "resolved or needs_verification. Both are successful tool results.",
+            "type": "string"
+          },
+          "unknowns": {
+            "description": "Required requirement ids still unknown across the assessed candidates; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "policy_id",
+          "resolution_id",
+          "outcome",
+          "selected",
+          "shortlist",
+          "unknowns",
+          "reasons",
+          "rejected",
+          "applied_feedback",
+          "effective_policy"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_report_outcome",
+      "description": "Record what actually happened after a Resolution was used. Append-only factual feedback: it is not Evidence, never changes a policy and never triggers a re-resolution. Report success only when integration really succeeded.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "adopted, rejected, integration_succeeded, integration_failed or abandoned.",
+            "type": "string"
+          },
+          "note": {
+            "description": "Optional note of at most 1000 characters; never logged.",
+            "type": "string"
+          },
+          "resolution_id": {
+            "description": "Storage identity of the resolution being reported on.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resolution_id",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Storage identity of the recorded event.",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "Recorded kind.",
+            "type": "string"
+          },
+          "note": {
+            "description": "Echo of the supplied note.",
+            "type": "string"
+          },
+          "recorded_at": {
+            "description": "When the event was recorded.",
+            "type": "string"
+          },
+          "resolution_id": {
+            "description": "Resolution the event reports on.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "resolution_id",
+          "kind",
+          "note",
+          "recorded_at"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_resolve",
+      "description": "Compare candidates under an explicit policy and produce a Packet 7 decision. Returns resolved or needs_verification; both are successful results. REFERENCE means engineering knowledge, never a verified implementation.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "description": "Candidates to consider; send [] when there are none.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reuse_mode": {
+                  "description": "Reuse mode under consideration: copy, dependency, adapt or reference.",
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "description": "Opaque Reusery specimen id.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "reuse_mode"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "contract_id": {
+            "description": "Contract being resolved.",
+            "type": "string"
+          },
+          "policy": {
+            "additionalProperties": false,
+            "description": "Structured policy. Omit to use the built-in public-go-baseline/v1.",
+            "properties": {
+              "dependencies": {
+                "additionalProperties": false,
+                "description": "Dependency burden rules.",
+                "properties": {
+                  "max_direct": {
+                    "description": "Maximum permitted direct dependencies. Omit for no quantity rule.",
+                    "type": [
+                      "null",
+                      "integer"
+                    ]
+                  },
+                  "unknown": {
+                    "description": "Action when the dependency count is unknown.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "unknown"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "description": "Policy profile identifier recorded on the resolution.",
+                "type": "string"
+              },
+              "license": {
+                "additionalProperties": false,
+                "description": "Licence rules.",
+                "properties": {
+                  "allow": {
+                    "description": "Exact licence expressions that are allowed; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "deny": {
+                    "description": "Exact licence expressions that are denied; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "multiple": {
+                    "description": "Action when several licence expressions are observed.",
+                    "type": "string"
+                  },
+                  "unknown": {
+                    "description": "Action when no licence is established.",
+                    "type": "string"
+                  },
+                  "unlisted": {
+                    "description": "Action when the licence is known but not listed.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "allow",
+                  "deny",
+                  "unknown",
+                  "multiple",
+                  "unlisted"
+                ],
+                "type": "object"
+              },
+              "maintenance": {
+                "additionalProperties": false,
+                "description": "Maintenance rules.",
+                "properties": {
+                  "archived": {
+                    "description": "Action when the source repository is archived.",
+                    "type": "string"
+                  },
+                  "deprecated": {
+                    "description": "Action when the package is deprecated.",
+                    "type": "string"
+                  },
+                  "max_days_since_push": {
+                    "description": "Staleness window in days. Omit to disable the rule.",
+                    "type": [
+                      "null",
+                      "integer"
+                    ]
+                  },
+                  "max_days_since_release": {
+                    "description": "Release age window in days. Omit to disable the rule.",
+                    "type": [
+                      "null",
+                      "integer"
+                    ]
+                  },
+                  "stale": {
+                    "description": "Action when the last push exceeds the configured window.",
+                    "type": "string"
+                  },
+                  "unknown": {
+                    "description": "Action when a configured maintenance fact is unknown.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "archived",
+                  "deprecated",
+                  "stale",
+                  "unknown"
+                ],
+                "type": "object"
+              },
+              "reuse": {
+                "additionalProperties": false,
+                "description": "Reuse mode rules.",
+                "properties": {
+                  "allowed": {
+                    "description": "Reuse modes the policy permits; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "preferred": {
+                    "description": "Permitted modes in preference order; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  }
+                },
+                "required": [
+                  "allowed",
+                  "preferred"
+                ],
+                "type": "object"
+              },
+              "schema_version": {
+                "description": "Policy schema version; must be 1.",
+                "type": "integer"
+              },
+              "security": {
+                "additionalProperties": false,
+                "description": "Advisory rules.",
+                "properties": {
+                  "known_advisory": {
+                    "description": "Action when a known advisory identifier was reported.",
+                    "type": "string"
+                  },
+                  "unknown": {
+                    "description": "Action when the advisory picture is unknown.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "known_advisory",
+                  "unknown"
+                ],
+                "type": "object"
+              },
+              "selection": {
+                "additionalProperties": false,
+                "description": "Selection bounds.",
+                "properties": {
+                  "max_options": {
+                    "description": "Maximum number of candidates in the shortlist.",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "max_options"
+                ],
+                "type": "object"
+              },
+              "source": {
+                "additionalProperties": false,
+                "description": "Provenance rules.",
+                "properties": {
+                  "missing_revision": {
+                    "description": "Action when a required revision is missing.",
+                    "type": "string"
+                  },
+                  "require_revision_for": {
+                    "description": "Reuse modes that require a pinned revision; never null.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  }
+                },
+                "required": [
+                  "require_revision_for",
+                  "missing_revision"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "schema_version",
+              "id",
+              "reuse",
+              "license",
+              "security",
+              "dependencies",
+              "maintenance",
+              "source",
+              "selection"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "primitive_id": {
+            "description": "Primitive being resolved.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "primitive_id",
+          "contract_id",
+          "candidates"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "description": "reuse, adapt, depend, reference or build_locally; null when nothing was persisted.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "policy_id": {
+            "description": "Policy profile identifier.",
+            "type": "string"
+          },
+          "reasons": {
+            "description": "Deterministic reasons for the decision; empty when nothing was persisted.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "rejected": {
+            "description": "Negative knowledge preserved on the resolution; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reasons": {
+                  "description": "Why it was rejected; never null.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "specimen_id": {
+                  "description": "Rejected candidate.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "reasons"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "resolution_id": {
+            "description": "Persisted resolution identity, or null when nothing was persisted.",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "selected": {
+            "additionalProperties": false,
+            "description": "Selected candidate, or null.",
+            "properties": {
+              "disposition": {
+                "description": "Why this candidate could be used.",
+                "type": "string"
+              },
+              "license": {
+                "description": "Declared licence when the source declares one.",
+                "type": "string"
+              },
+              "reuse_mode": {
+                "description": "Reuse mode selected.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Pinned revision when one is known.",
+                "type": "string"
+              },
+              "source_url": {
+                "description": "Attributable source URL.",
+                "type": "string"
+              },
+              "specimen_id": {
+                "description": "Opaque Reusery specimen id.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "specimen_id",
+              "reuse_mode",
+              "disposition",
+              "source_url",
+              "revision",
+              "license"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "shortlist": {
+            "description": "Ranked alternatives; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "disposition": {
+                  "description": "Why this candidate could or could not be used.",
+                  "type": "string"
+                },
+                "reuse_mode": {
+                  "description": "Reuse mode considered.",
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "description": "Opaque Reusery specimen id.",
+                  "type": "string"
+                },
+                "unknown_requirements": {
+                  "description": "Required requirement ids still behaviourally unknown; never null.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                }
+              },
+              "required": [
+                "specimen_id",
+                "reuse_mode",
+                "disposition",
+                "unknown_requirements"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "status": {
+            "description": "resolved or needs_verification. Both are successful tool results.",
+            "type": "string"
+          },
+          "unknowns": {
+            "description": "Required requirement ids still unknown across the assessed candidates; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "policy_id",
+          "resolution_id",
+          "outcome",
+          "selected",
+          "shortlist",
+          "unknowns",
+          "reasons",
+          "rejected"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"unicode"
@@ -70,11 +71,17 @@ func LoadCorpus(path string) (Corpus, error) {
 	if err != nil {
 		return Corpus{}, fmt.Errorf("%w: read %s: %v", ErrCorpus, path, err)
 	}
+	return LoadCorpusReader(bytes.NewReader(data), path)
+}
+
+// LoadCorpusReader reads one evaluation corpus from r. label names the source
+// in error messages: a corpus path, or "-" for standard input.
+func LoadCorpusReader(r io.Reader, label string) (Corpus, error) {
 	var corpus Corpus
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(r)
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&corpus); err != nil {
-		return Corpus{}, fmt.Errorf("%w: decode %s: %v", ErrCorpus, path, err)
+		return Corpus{}, fmt.Errorf("%w: decode %s: %v", ErrCorpus, label, err)
 	}
 	if err := corpus.Validate(); err != nil {
 		return Corpus{}, err

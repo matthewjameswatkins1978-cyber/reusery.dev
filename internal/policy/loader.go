@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,16 +96,25 @@ func Load(root, path string) (Policy, error) {
 	if err != nil {
 		return Policy{}, fmt.Errorf("policy: read %s: %w", file, err)
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	return Decode(bytes.NewReader(data), file)
+}
+
+// Decode reads one policy profile from r. label names the source in error
+// messages: a file path, or "-" when the caller streamed standard input.
+//
+// Decoding stays strict (unknown fields are rejected, so a typo never silently
+// disables a rule) and the resulting profile is validated before it is used.
+func Decode(r io.Reader, label string) (Policy, error) {
+	decoder := yaml.NewDecoder(r)
 	decoder.KnownFields(true)
 	var dto policyDTO
 	if err := decoder.Decode(&dto); err != nil {
-		return Policy{}, fmt.Errorf("policy: decode %s: %w", file, err)
+		return Policy{}, fmt.Errorf("policy: decode %s: %w", label, err)
 	}
 
 	policy := mapPolicy(dto)
 	if err := policy.Validate(); err != nil {
-		return Policy{}, fmt.Errorf("policy: %s: %w", file, err)
+		return Policy{}, fmt.Errorf("policy: %s: %w", label, err)
 	}
 	return policy, nil
 }
@@ -335,14 +345,20 @@ func LoadFeedback(root, path string) ([]Feedback, error) {
 	if err != nil {
 		return nil, fmt.Errorf("policy: read %s: %w", file, err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	return DecodeFeedback(bytes.NewReader(data), file)
+}
+
+// DecodeFeedback reads one structured feedback document from r. label names
+// the source in error messages: a file path, or "-" for standard input.
+func DecodeFeedback(r io.Reader, label string) ([]Feedback, error) {
+	decoder := json.NewDecoder(r)
 	decoder.DisallowUnknownFields()
 	var payload feedbackFile
 	if err := decoder.Decode(&payload); err != nil {
-		return nil, fmt.Errorf("%w: decode %s: %v", ErrInvalidFeedback, file, err)
+		return nil, fmt.Errorf("%w: decode %s: %v", ErrInvalidFeedback, label, err)
 	}
 	if len(payload.Feedback) == 0 {
-		return nil, fmt.Errorf("%w: %s contains no feedback entries", ErrInvalidFeedback, file)
+		return nil, fmt.Errorf("%w: %s contains no feedback entries", ErrInvalidFeedback, label)
 	}
 
 	feedback := make([]Feedback, 0, len(payload.Feedback))

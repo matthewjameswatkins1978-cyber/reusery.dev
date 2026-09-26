@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store/postgres/sqlc"
 )
@@ -214,6 +215,65 @@ func (s *Store) CountResolutions(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("count resolutions: %w", err)
 	}
 	return count, nil
+}
+
+// ListPrimitives returns at most limit primitives in id order.
+//
+// It backs capability discovery: an agent asks what engineering behaviours
+// Reusery knows before asking for a decision. Ordering by id keeps the list
+// stable across calls so a paginating client never sees rows jump around.
+func (s *Store) ListPrimitives(ctx context.Context, limit int) ([]model.Primitive, error) {
+	if limit <= 0 {
+		return []model.Primitive{}, nil
+	}
+	rows, err := s.queries.ListPrimitives(ctx, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list primitives: %w", err)
+	}
+	items := make([]model.Primitive, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, primitiveFromRow(row))
+	}
+	return items, nil
+}
+
+// InsertFeedback appends one factual post-resolution event and returns its
+// storage identity. It never touches the Resolution itself.
+func (s *Store) InsertFeedback(ctx context.Context, f outcome.Feedback) (int64, error) {
+	row, err := s.queries.InsertResolutionFeedback(ctx, sqlc.InsertResolutionFeedbackParams{
+		ResolutionID: f.ResolutionID,
+		Kind:         string(f.Kind),
+		Note:         f.Note,
+		RecordedAt:   timeToPg(f.RecordedAt),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("insert resolution feedback: %w", err)
+	}
+	return row.ID, nil
+}
+
+// ListFeedback returns stored post-resolution events in chronological order.
+func (s *Store) ListFeedback(ctx context.Context, resolutionID int64, limit int) ([]outcome.StoredFeedback, error) {
+	rows, err := s.queries.ListResolutionFeedback(ctx, sqlc.ListResolutionFeedbackParams{
+		ResolutionID: resolutionID,
+		Limit:        int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list resolution feedback: %w", err)
+	}
+	items := make([]outcome.StoredFeedback, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, outcome.StoredFeedback{
+			ID: row.ID,
+			Feedback: outcome.Feedback{
+				ResolutionID: row.ResolutionID,
+				Kind:         outcome.Kind(row.Kind),
+				Note:         row.Note,
+				RecordedAt:   row.RecordedAt.Time,
+			},
+		})
+	}
+	return items, nil
 }
 
 func mapLookupError(err error) error {
