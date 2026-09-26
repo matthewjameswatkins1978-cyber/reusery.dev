@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,11 @@ const (
 	e2ePackageSpecimen = "public/pkg.go.dev/github.com%2Fexample%2Fsubproc@v1.0.0"
 	e2eCodeSpecimen    = "public/github/code/example/tools@abc123def456:exec/exec.go"
 )
+
+// hexDigest matches a long hex run, i.e. an evidence id digest. Digests are
+// masked before popularity scanning so their content cannot collide with a
+// banned substring.
+var hexDigest = regexp.MustCompile(`[0-9a-f]{16,}`)
 
 // fakeDepsDev serves a stable deps.dev v3 payload for the fixture package.
 func fakeDepsDev(t *testing.T) *httptest.Server {
@@ -307,8 +313,13 @@ func TestQualityEndToEndWithRealPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
+	// Mask hex digests before scanning. Evidence ids are content hashes, and
+	// githubmeta records the (test) source URL, so the digest changes with the
+	// ephemeral httptest port. A popularity scan against raw hex would be a
+	// false positive whenever a digest happens to contain the banned substring.
+	sanitised := hexDigest.ReplaceAllString(string(payload), "<digest>")
 	for _, banned := range []string{"stargazers", "forks_count", "1234", "quality_score"} {
-		if strings.Contains(string(payload), banned) {
+		if strings.Contains(sanitised, banned) {
 			t.Errorf("popularity or score leaked into the decision: %s", payload)
 		}
 	}
