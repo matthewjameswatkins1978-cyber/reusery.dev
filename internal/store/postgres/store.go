@@ -11,6 +11,7 @@ import (
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store/postgres/sqlc"
 )
@@ -271,6 +272,180 @@ func (s *Store) ListFeedback(ctx context.Context, resolutionID int64, limit int)
 				Note:         row.Note,
 				RecordedAt:   row.RecordedAt.Time,
 			},
+		})
+	}
+	return items, nil
+}
+
+// ------------------------------------------------------------ project context
+
+// UpsertProject stores a project's durable identity. A local project's
+// source_locator is always empty by construction; the schema enforces it.
+func (s *Store) UpsertProject(ctx context.Context, p project.Project) error {
+	if _, err := s.queries.UpsertProject(ctx, projectToUpsert(p)); err != nil {
+		return fmt.Errorf("upsert project: %w", err)
+	}
+	return nil
+}
+
+// GetProject loads one project by its derived identity.
+func (s *Store) GetProject(ctx context.Context, id string) (project.Project, error) {
+	row, err := s.queries.GetProject(ctx, id)
+	if err != nil {
+		return project.Project{}, mapLookupError(err)
+	}
+	return projectFromRow(row), nil
+}
+
+// InsertFingerprint stores one immutable fingerprint for a project.
+func (s *Store) InsertFingerprint(ctx context.Context, fingerprint project.StoredFingerprint) (int64, error) {
+	params, err := fingerprintToInsert(fingerprint)
+	if err != nil {
+		return 0, err
+	}
+	row, err := s.queries.InsertProjectFingerprint(ctx, params)
+	if err != nil {
+		return 0, fmt.Errorf("insert project fingerprint: %w", err)
+	}
+	return row.ID, nil
+}
+
+// GetFingerprintByHash returns the stored fingerprint with this digest, or
+// ErrNotFound when the project has never been seen with these manifest facts.
+func (s *Store) GetFingerprintByHash(ctx context.Context, projectID, sha string) (project.StoredFingerprint, error) {
+	row, err := s.queries.GetProjectFingerprintByHash(ctx, sqlc.GetProjectFingerprintByHashParams{
+		ProjectID:         projectID,
+		FingerprintSha256: sha,
+	})
+	if err != nil {
+		return project.StoredFingerprint{}, mapLookupError(err)
+	}
+	return fingerprintFromRow(row)
+}
+
+// GetLatestFingerprint returns the newest fingerprint, or ErrNotFound
+// when the project has none.
+func (s *Store) GetLatestFingerprint(ctx context.Context, projectID string) (project.StoredFingerprint, error) {
+	row, err := s.queries.GetLatestProjectFingerprint(ctx, projectID)
+	if err != nil {
+		return project.StoredFingerprint{}, mapLookupError(err)
+	}
+	return fingerprintFromRow(row)
+}
+
+// InsertPreference stores one explicit, reversible project memory.
+func (s *Store) InsertPreference(ctx context.Context, preference project.Preference) (int64, error) {
+	row, err := s.queries.InsertProjectPreference(ctx, preferenceToInsert(preference))
+	if err != nil {
+		return 0, fmt.Errorf("insert project preference: %w", err)
+	}
+	return row.ID, nil
+}
+
+// GetPreference loads one preference scoped to its project.
+func (s *Store) GetPreference(ctx context.Context, projectID string, id int64) (project.Preference, error) {
+	row, err := s.queries.GetProjectPreference(ctx, sqlc.GetProjectPreferenceParams{
+		ID: id, ProjectID: projectID,
+	})
+	if err != nil {
+		return project.Preference{}, mapLookupError(err)
+	}
+	return preferenceFromRow(row), nil
+}
+
+// ForgetPreference stamps forgotten_at. The row is never deleted, so history
+// is preserved while the effect stops applying. Forgetting twice is a no-op.
+func (s *Store) ForgetPreference(ctx context.Context, projectID string, id int64, at time.Time) error {
+	if err := s.queries.ForgetProjectPreference(ctx, sqlc.ForgetProjectPreferenceParams{
+		ID: id, ProjectID: projectID, ForgottenAt: timeToPg(at),
+	}); err != nil {
+		return fmt.Errorf("forget project preference: %w", err)
+	}
+	return nil
+}
+
+// ListPreferences returns stored memories in id order, active and forgotten.
+func (s *Store) ListPreferences(ctx context.Context, projectID string, limit int) ([]project.Preference, error) {
+	if limit <= 0 {
+		return []project.Preference{}, nil
+	}
+	rows, err := s.queries.ListProjectPreferences(ctx, sqlc.ListProjectPreferencesParams{
+		ProjectID: projectID, Limit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list project preferences: %w", err)
+	}
+	items := make([]project.Preference, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, preferenceFromRow(row))
+	}
+	return items, nil
+}
+
+// ListActivePreferences returns only the memories that still influence
+// decisions, in id order.
+func (s *Store) ListActivePreferences(ctx context.Context, projectID string, limit int) ([]project.Preference, error) {
+	if limit <= 0 {
+		return []project.Preference{}, nil
+	}
+	rows, err := s.queries.ListActiveProjectPreferences(ctx, sqlc.ListActiveProjectPreferencesParams{
+		ProjectID: projectID, Limit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list active project preferences: %w", err)
+	}
+	items := make([]project.Preference, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, preferenceFromRow(row))
+	}
+	return items, nil
+}
+
+// UpsertContext stores an immutable project-context snapshot. Identical
+// content maps to an identical hash, so this never rewrites history.
+func (s *Store) UpsertContext(ctx context.Context, snapshot project.StoredContext) error {
+	params, err := contextToUpsert(snapshot)
+	if err != nil {
+		return err
+	}
+	if _, err := s.queries.UpsertProjectContext(ctx, params); err != nil {
+		return fmt.Errorf("upsert project context: %w", err)
+	}
+	return nil
+}
+
+// GetContext loads one immutable project-context snapshot by its hash.
+func (s *Store) GetContext(ctx context.Context, hash string) (project.StoredContext, error) {
+	row, err := s.queries.GetProjectContext(ctx, hash)
+	if err != nil {
+		return project.StoredContext{}, mapLookupError(err)
+	}
+	return contextFromRow(row)
+}
+
+// ListResolutions returns bounded, newest-first decision history.
+//
+// Rejections are loaded per resolution so negative knowledge survives into
+// history. The bound is what keeps that cost predictable.
+func (s *Store) ListResolutions(ctx context.Context, projectID string, limit int) ([]project.ProjectResolution, error) {
+	if limit <= 0 {
+		return []project.ProjectResolution{}, nil
+	}
+	rows, err := s.queries.ListResolutionsByProject(ctx, sqlc.ListResolutionsByProjectParams{
+		ProjectID: optionalString(projectID), Limit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list resolutions for project: %w", err)
+	}
+	items := make([]project.ProjectResolution, 0, len(rows))
+	for _, row := range rows {
+		rejections, err := s.queries.ListRejectionsByResolution(ctx, row.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list rejections for resolution %d: %w", row.ID, err)
+		}
+		items = append(items, project.ProjectResolution{
+			ID:         row.ID,
+			Resolution: resolutionFromRows(row, rejections),
 		})
 	}
 	return items, nil

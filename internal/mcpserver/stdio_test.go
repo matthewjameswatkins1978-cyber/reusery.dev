@@ -5,6 +5,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,7 +51,15 @@ func TestStdioExecutableConversation(t *testing.T) {
 
 	binary := buildReusery(t)
 
-	server := exec.Command(binary, "mcp")
+	// The local project root is configured once, at startup: a tool call can
+	// never point the server at another part of the filesystem.
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "go.mod"),
+		[]byte("module example.com/stdio-widget\n\ngo 1.27.1\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	server := exec.Command(binary, "mcp", "--project-root", projectRoot)
 	server.Env = []string{
 		"REUSERY_DATABASE_URL=" + databaseURL,
 		"REUSERY_MCP_ENABLE_EXTERNAL_OPERATIONS=false",
@@ -78,11 +87,26 @@ func TestStdioExecutableConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(tools.Tools) != 8 {
-		t.Errorf("tools = %d, want 8", len(tools.Tools))
+	if len(tools.Tools) != 12 {
+		t.Errorf("tools = %d, want 12", len(tools.Tools))
 	}
 
-	// 2. capability discovery
+	// 2. a local project scan uses the configured root and never reports it
+	_, scanned := callTool(t, session, ToolProjectScan, ProjectScanInput{})
+	if scanned["source_kind"] != "local" {
+		t.Fatalf("source kind = %v, want local", scanned["source_kind"])
+	}
+	projectID, _ := scanned["project_id"].(string)
+	if !strings.HasPrefix(projectID, "project/go/") {
+		t.Fatalf("project id = %q", projectID)
+	}
+	if encoded, err := json.Marshal(scanned); err != nil {
+		t.Fatalf("encode scan: %v", err)
+	} else if bytes.Contains(encoded, []byte(projectRoot)) {
+		t.Errorf("the scan result contains the configured root: %s", encoded)
+	}
+
+	// 3. capability discovery
 	_, catalogResult := callTool(t, session, ToolCatalog, CatalogInput{})
 	if catalogResult["primitives"] == nil {
 		t.Fatalf("catalog returned nothing: %v", catalogResult)
@@ -92,7 +116,7 @@ func TestStdioExecutableConversation(t *testing.T) {
 		t.Fatalf("catalog detail returned nothing: %v", detail)
 	}
 
-	// 3. resolve a deterministic fixture
+	// 4. resolve a deterministic fixture
 	pol := permissivePolicyForFixture()
 	_, decision := callTool(t, session, ToolResolve, ResolveInput{
 		PrimitiveID: fixturePrimitive,
@@ -107,7 +131,7 @@ func TestStdioExecutableConversation(t *testing.T) {
 	}
 	resolutionID := int64(decision["resolution_id"].(float64))
 
-	// 4. inspect the remembered resolution
+	// 5. inspect the remembered resolution
 	_, stored := callTool(t, session, ToolInspectResolution,
 		InspectResolutionInput{ResolutionID: resolutionID})
 	if stored["resolution"] == nil {
@@ -117,7 +141,7 @@ func TestStdioExecutableConversation(t *testing.T) {
 		t.Errorf("expected no feedback yet, got %v", feedback)
 	}
 
-	// 5. report what actually happened
+	// 6. report what actually happened
 	_, recorded := callTool(t, session, ToolReportOutcome, OutcomeInput{
 		ResolutionID: resolutionID, Kind: "adopted", Note: "wired into the parser",
 	})
@@ -125,7 +149,7 @@ func TestStdioExecutableConversation(t *testing.T) {
 		t.Errorf("kind = %v", recorded["kind"])
 	}
 
-	// 6. inspect again: the history is now visible
+	// 7. inspect again: the history is now visible
 	_, reloaded := callTool(t, session, ToolInspectResolution,
 		InspectResolutionInput{ResolutionID: resolutionID})
 	events := reloaded["outcome_feedback"].([]any)
@@ -136,7 +160,7 @@ func TestStdioExecutableConversation(t *testing.T) {
 		t.Errorf("event = %v", events[0])
 	}
 
-	// 7. external operations are off: no provider call can happen
+	// 8. external operations are off: no provider call can happen
 	toolResult, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      ToolDiscover,
 		Arguments: discoveryProfileArguments(),
@@ -151,7 +175,7 @@ func TestStdioExecutableConversation(t *testing.T) {
 		t.Errorf("tool error = %q", text)
 	}
 
-	// 8. close cleanly: the child must exit without a protocol traceback
+	// 9. close cleanly: the child must exit without a protocol traceback
 	if err := session.Close(); err != nil {
 		t.Errorf("close session: %v", err)
 	}

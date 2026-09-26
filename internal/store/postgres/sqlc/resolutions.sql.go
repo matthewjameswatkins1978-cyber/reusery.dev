@@ -24,7 +24,7 @@ func (q *Queries) CountResolutions(ctx context.Context) (int64, error) {
 }
 
 const getResolution = `-- name: GetResolution :one
-SELECT id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at, policy_id
+SELECT id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at, policy_id, project_id, project_context_hash
 FROM resolutions
 WHERE id = $1
 `
@@ -43,6 +43,8 @@ func (q *Queries) GetResolution(ctx context.Context, id int64) (Resolution, erro
 		&i.EvidenceIds,
 		&i.ResolvedAt,
 		&i.PolicyID,
+		&i.ProjectID,
+		&i.ProjectContextHash,
 	)
 	return i, err
 }
@@ -70,21 +72,25 @@ func (q *Queries) InsertRejection(ctx context.Context, arg InsertRejectionParams
 }
 
 const insertResolution = `-- name: InsertResolution :one
-INSERT INTO resolutions (primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, policy_id, resolved_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at, policy_id
+INSERT INTO resolutions
+    (primitive_id, contract_id, outcome, specimen_id, reasons, unknowns,
+     evidence_ids, policy_id, project_id, project_context_hash, resolved_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, primitive_id, contract_id, outcome, specimen_id, reasons, unknowns, evidence_ids, resolved_at, policy_id, project_id, project_context_hash
 `
 
 type InsertResolutionParams struct {
-	PrimitiveID string
-	ContractID  string
-	Outcome     string
-	SpecimenID  *string
-	Reasons     []string
-	Unknowns    []string
-	EvidenceIds []string
-	PolicyID    string
-	ResolvedAt  pgtype.Timestamptz
+	PrimitiveID        string
+	ContractID         string
+	Outcome            string
+	SpecimenID         *string
+	Reasons            []string
+	Unknowns           []string
+	EvidenceIds        []string
+	PolicyID           string
+	ProjectID          *string
+	ProjectContextHash *string
+	ResolvedAt         pgtype.Timestamptz
 }
 
 func (q *Queries) InsertResolution(ctx context.Context, arg InsertResolutionParams) (Resolution, error) {
@@ -97,6 +103,8 @@ func (q *Queries) InsertResolution(ctx context.Context, arg InsertResolutionPara
 		arg.Unknowns,
 		arg.EvidenceIds,
 		arg.PolicyID,
+		arg.ProjectID,
+		arg.ProjectContextHash,
 		arg.ResolvedAt,
 	)
 	var i Resolution
@@ -111,6 +119,8 @@ func (q *Queries) InsertResolution(ctx context.Context, arg InsertResolutionPara
 		&i.EvidenceIds,
 		&i.ResolvedAt,
 		&i.PolicyID,
+		&i.ProjectID,
+		&i.ProjectContextHash,
 	)
 	return i, err
 }

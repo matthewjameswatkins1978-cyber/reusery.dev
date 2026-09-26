@@ -935,6 +935,526 @@
       }
     },
     {
+      "name": "reusery_project_context",
+      "description": "Inspect a stored project: fingerprint summary, active remembered preferences and recent decisions. Contains no source code and no filesystem path.",
+      "annotations": {
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "Recent resolutions to return; defaults to 20.",
+            "type": "integer"
+          },
+          "project_id": {
+            "description": "Derived project identity.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "active_preferences": {
+            "description": "Memories that still influence decisions; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "description": "Candidate the memory is about.",
+                  "type": "string"
+                },
+                "id": {
+                  "description": "Storage identity.",
+                  "type": "integer"
+                },
+                "int_value": {
+                  "description": "Numeric ceiling, for a dependency limit.",
+                  "type": [
+                    "null",
+                    "integer"
+                  ]
+                },
+                "kind": {
+                  "description": "Preference kind.",
+                  "type": "string"
+                },
+                "primitive_id": {
+                  "description": "Primitive scope, when the memory is scoped.",
+                  "type": "string"
+                },
+                "recorded_at": {
+                  "description": "When it was remembered.",
+                  "type": "string"
+                },
+                "source_reason": {
+                  "description": "Structured feedback reason that produced it.",
+                  "type": "string"
+                },
+                "text_value": {
+                  "description": "Exact value, for example a denied licence.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "counts": {
+            "additionalProperties": false,
+            "description": "Aggregate manifest counts.",
+            "properties": {
+              "direct_dependencies": {
+                "description": "Sum of direct requirements across modules.",
+                "type": "integer"
+              },
+              "indirect_dependencies": {
+                "description": "Sum of indirect requirements across modules.",
+                "type": "integer"
+              },
+              "modules": {
+                "description": "Modules in the fingerprint.",
+                "type": "integer"
+              },
+              "replacements": {
+                "description": "Sum of replace directives across modules.",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "modules",
+              "direct_dependencies",
+              "indirect_dependencies",
+              "replacements"
+            ],
+            "type": "object"
+          },
+          "fingerprint_sha256": {
+            "description": "SHA-256 of the canonical manifest fingerprint.",
+            "type": "string"
+          },
+          "forgotten": {
+            "description": "Revoked memories kept for history.",
+            "type": "integer"
+          },
+          "language": {
+            "description": "Fingerprint language.",
+            "type": "string"
+          },
+          "modules": {
+            "description": "One line per module; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "go_version": {
+                  "description": "Declared Go version, or the workspace's.",
+                  "type": "string"
+                },
+                "module_path": {
+                  "description": "Go module path.",
+                  "type": "string"
+                },
+                "toolchain": {
+                  "description": "Declared toolchain, or the workspace's.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "module_path",
+                "go_version",
+                "toolchain"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "name": {
+            "description": "Cosmetic display name.",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Derived project identity.",
+            "type": "string"
+          },
+          "recent_resolutions": {
+            "description": "Newest-first decision history; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "outcome": {
+                  "description": "reuse, adapt, depend, reference or build_locally.",
+                  "type": "string"
+                },
+                "policy_id": {
+                  "description": "Policy that justified the decision.",
+                  "type": "string"
+                },
+                "primitive_id": {
+                  "description": "Primitive resolved.",
+                  "type": "string"
+                },
+                "project_context_hash": {
+                  "description": "Immutable context snapshot the decision saw.",
+                  "type": "string"
+                },
+                "resolution_id": {
+                  "description": "Storage identity; pass to reusery_inspect_resolution.",
+                  "type": "integer"
+                },
+                "resolved_at": {
+                  "description": "When the decision was recorded.",
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "description": "Selected specimen, empty for build_locally.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resolution_id",
+                "outcome",
+                "policy_id",
+                "primitive_id",
+                "resolved_at"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "source_kind": {
+            "description": "local or github_public.",
+            "type": "string"
+          },
+          "source_locator": {
+            "description": "Public repository and subdirectory; empty for local.",
+            "type": "string"
+          },
+          "source_revision": {
+            "description": "Immutable commit SHA for a public scan.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "name",
+          "source_kind",
+          "source_locator",
+          "source_revision",
+          "fingerprint_sha256",
+          "language",
+          "modules",
+          "counts",
+          "active_preferences",
+          "forgotten",
+          "recent_resolutions"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_project_forget",
+      "description": "Revoke a remembered project preference. The historical row is kept, so forgetting is idempotent and the decision history stays inspectable.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "preference_id": {
+            "description": "Storage identity of the preference.",
+            "type": "integer"
+          },
+          "project_id": {
+            "description": "Derived project identity.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "preference_id"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "description": "Always false after a forget.",
+            "type": "boolean"
+          },
+          "forgotten_at": {
+            "description": "When it was revoked.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Storage identity.",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "Preference kind.",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project the memory belonged to.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "kind",
+          "forgotten_at",
+          "active"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_project_remember",
+      "description": "Remember an explicit project preference derived from stored candidate facts. Supply a structured reason, never a preference value: Reusery derives the value from what it already knows. This is the only way a preference is created - reusery_refine and reusery_report_outcome never write memory on their own. Remember only when the preference should apply beyond the current decision.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "description": "Candidate the memory is about.",
+            "type": "string"
+          },
+          "primitive_id": {
+            "description": "Primitive the memory is scoped to.",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Derived project identity.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "not_quite, too_many_dependencies, licence_not_allowed, avoid_dependency, avoid_reference or archived_project.",
+            "type": "string"
+          },
+          "source_resolution_id": {
+            "description": "Resolution the memory was derived from.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "primitive_id",
+          "candidate_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "description": "False when an identical active memory already existed.",
+            "type": "boolean"
+          },
+          "effect": {
+            "description": "Deterministic description of what the memory changes.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Storage identity.",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "Derived preference kind.",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project the memory belongs to.",
+            "type": "string"
+          },
+          "recorded_at": {
+            "description": "When it was remembered.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "kind",
+          "effect",
+          "created",
+          "recorded_at"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "reusery_project_scan",
+      "description": "Derive a bounded project fingerprint from manifests only. It reads go.work and go.mod files, never source code, and never runs go or git. A local scan uses the project root configured on the server and never records a filesystem path; a github_public scan reads only a public repository at an immutable commit. Project context may change fit; it is never evidence.",
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "ref": {
+            "description": "Optional git ref resolved to an immutable commit SHA.",
+            "type": "string"
+          },
+          "repository": {
+            "description": "Public repository as owner/repo. Required for github_public.",
+            "type": "string"
+          },
+          "source": {
+            "description": "local or github_public. Defaults to local.",
+            "type": "string"
+          },
+          "subdir": {
+            "description": "Optional repository-relative subdirectory.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "additionalProperties": false,
+            "description": "Aggregate manifest counts.",
+            "properties": {
+              "direct_dependencies": {
+                "description": "Sum of direct requirements across modules.",
+                "type": "integer"
+              },
+              "indirect_dependencies": {
+                "description": "Sum of indirect requirements across modules.",
+                "type": "integer"
+              },
+              "modules": {
+                "description": "Modules in the fingerprint.",
+                "type": "integer"
+              },
+              "replacements": {
+                "description": "Sum of replace directives across modules.",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "modules",
+              "direct_dependencies",
+              "indirect_dependencies",
+              "replacements"
+            ],
+            "type": "object"
+          },
+          "fingerprint_sha256": {
+            "description": "SHA-256 of the canonical manifest fingerprint.",
+            "type": "string"
+          },
+          "modules": {
+            "description": "One line per module; never null.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "go_version": {
+                  "description": "Declared Go version, or the workspace's.",
+                  "type": "string"
+                },
+                "module_path": {
+                  "description": "Go module path.",
+                  "type": "string"
+                },
+                "toolchain": {
+                  "description": "Declared toolchain, or the workspace's.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "module_path",
+                "go_version",
+                "toolchain"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "name": {
+            "description": "Cosmetic display name.",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Derived project identity; never a filesystem path.",
+            "type": "string"
+          },
+          "source_kind": {
+            "description": "local or github_public.",
+            "type": "string"
+          },
+          "source_locator": {
+            "description": "Public repository and subdirectory; always empty for a local project.",
+            "type": "string"
+          },
+          "source_revision": {
+            "description": "Immutable commit SHA for a public scan; empty for local.",
+            "type": "string"
+          },
+          "warnings": {
+            "description": "Safe notes about skipped input; never contains a path.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "project_id",
+          "name",
+          "source_kind",
+          "source_locator",
+          "source_revision",
+          "fingerprint_sha256",
+          "modules",
+          "counts",
+          "warnings"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "reusery_refine",
       "description": "Reject a result with a supported structured reason and re-resolve. Stateless: resend the original base policy, the same bounded candidate set and the complete accumulated feedback history.",
       "annotations": {
@@ -1229,6 +1749,10 @@
           "primitive_id": {
             "description": "Primitive being resolved.",
             "type": "string"
+          },
+          "project_id": {
+            "description": "Optional project identity. When supplied the decision is project-aware; when omitted Packet 9 semantics apply exactly.",
+            "type": "string"
           }
         },
         "required": [
@@ -1360,6 +1884,46 @@
           },
           "policy_id": {
             "description": "Policy profile identifier.",
+            "type": "string"
+          },
+          "project_context_hash": {
+            "description": "Immutable context snapshot the decision saw.",
+            "type": "string"
+          },
+          "project_effects": {
+            "description": "Per-candidate project dependency fit; absent without project context.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "dependency_fit": {
+                  "type": "string"
+                },
+                "module_path": {
+                  "type": "string"
+                },
+                "module_version": {
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "type": "string"
+                },
+                "tradeoff": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "dependency_fit"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "project_id": {
+            "description": "Project whose context applied, or absent.",
             "type": "string"
           },
           "reasons": {
@@ -1861,6 +2425,10 @@
           "primitive_id": {
             "description": "Primitive being resolved.",
             "type": "string"
+          },
+          "project_id": {
+            "description": "Optional project identity. When supplied the decision is project-aware; when omitted Packet 9 semantics apply exactly.",
+            "type": "string"
           }
         },
         "required": [
@@ -1882,6 +2450,46 @@
           },
           "policy_id": {
             "description": "Policy profile identifier.",
+            "type": "string"
+          },
+          "project_context_hash": {
+            "description": "Immutable context snapshot the decision saw.",
+            "type": "string"
+          },
+          "project_effects": {
+            "description": "Per-candidate project dependency fit; absent without project context.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "dependency_fit": {
+                  "type": "string"
+                },
+                "module_path": {
+                  "type": "string"
+                },
+                "module_version": {
+                  "type": "string"
+                },
+                "specimen_id": {
+                  "type": "string"
+                },
+                "tradeoff": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "specimen_id",
+                "dependency_fit"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "project_id": {
+            "description": "Project whose context applied, or absent.",
             "type": "string"
           },
           "reasons": {

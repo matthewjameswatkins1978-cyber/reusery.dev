@@ -791,7 +791,7 @@ func TestErrorCodesAreStable(t *testing.T) {
 	want := []string{
 		CodeInvalidRequest, CodeNotFound, CodeConflict, CodeExternalOperations,
 		CodeUpstreamRateLimited, CodeUpstreamTimeout, CodeUpstreamUnavailable,
-		CodeAllProvidersFailed, CodeInternalError,
+		CodeAllProvidersFailed, CodeProjectRootUnconfigured, CodeInternalError,
 	}
 	got := CodeOrder()
 	if len(got) != len(want) {

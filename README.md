@@ -29,7 +29,11 @@ which records attributable licence/advisory/dependency/maintenance metadata,
 `reusery choose`, which compares candidates under an explicit policy and
 returns either a justified resolution or an honest `needs_verification`, and
 `reusery normalize`, which turns an ordinary engineering request into an
-inspectable provisional contract draft.
+inspectable provisional contract draft, `reusery mcp`, which serves the Model
+Context Protocol over stdio so an agent can check before it rebuilds, and
+`reusery project`, which fingerprints a project's manifests and remembers
+explicit, reversible decisions about it — context that may change fit but never
+truth.
 See [VISION.md](VISION.md), [MODEL.md](MODEL.md), and [RESOLVER.md](RESOLVER.md)
 for the product design, and [docs/engineering.md](docs/engineering.md) for
 foundation decisions.
@@ -251,6 +255,44 @@ silently guessed.
 > account; if the provider reports `model_not_found`, set
 > `REUSERY_OPENAI_MODEL` to a model your account exposes.
 
+## Project context workflow
+
+Reusery can fingerprint the project you are deciding for and remember explicit,
+reversible choices about it:
+
+```bash
+# 1. fingerprint this checkout (never stores the path)
+go run ./cmd/reusery project scan --root . --format json
+
+# 2. inspect what is remembered
+go run ./cmd/reusery project show --project-id project/go/<sha> --format json
+
+# 3. decide with that context; without --project-id this is the plain decision
+go run ./cmd/reusery choose `
+  --request examples/quality-bounded-subprocess.json `
+  --policy  policies/public-go-baseline-v1.yaml `
+  --project-id project/go/<sha> `
+  --format json
+
+# 4. remember one explicit decision, then revoke it again
+go run ./cmd/reusery project remember `
+  --project-id project/go/<sha> `
+  --primitive-id process/bounded-subprocess `
+  --candidate-id fixture/process/bounded-subprocess/complete-dependency `
+  --reason not_quite
+go run ./cmd/reusery project history --project-id project/go/<sha>
+go run ./cmd/reusery project forget --project-id project/go/<sha> --preference-id 1
+
+# 5. a public repository, read without any credential
+go run ./cmd/reusery project scan --source github_public --github owner/repo
+```
+
+**Project context may change fit. It must not change truth.** It can add a
+review requirement, add an inspectable trade-off, or break a tie among
+candidates that are already eligible — nothing else. Preferences are created
+only by an explicit `remember`; `refine` feedback and reported outcomes never
+become memory. Full reference: [docs/project-context.md](docs/project-context.md).
+
 ## Testing
 
 ```powershell
@@ -361,7 +403,8 @@ Reusery can serve the Model Context Protocol directly so a coding agent can
 check for an existing engineering route **before** writing code:
 
 ```bash
-reusery mcp          # stdio only; requires PostgreSQL
+reusery mcp                              # stdio only; requires PostgreSQL
+reusery mcp --project-root .             # ...and a local project to fingerprint
 ```
 
 Generic agent-host configuration:
@@ -369,21 +412,30 @@ Generic agent-host configuration:
 ```json
 {
   "mcpServers": {
-    "reusery": { "command": "reusery", "args": ["mcp"] }
+    "reusery": { "command": "reusery", "args": ["mcp", "--project-root", "."] }
   }
 }
 ```
 
-- **8 tools**, resolver-native: `reusery_catalog`, `reusery_discover`,
+- **12 tools**, resolver-native: `reusery_catalog`, `reusery_discover`,
   `reusery_enrich`, `reusery_resolve`, `reusery_refine`,
   `reusery_inspect_evidence`, `reusery_inspect_resolution`,
-  `reusery_report_outcome`.
+  `reusery_report_outcome`, plus the project tools `reusery_project_scan`,
+  `reusery_project_context`, `reusery_project_remember`,
+  `reusery_project_forget`.
+- **No tool takes a filesystem path.** The local project root is process
+  configuration (`--project-root`), never an argument, and it is never stored.
+- **No tool takes a credential.** A public repository is read with the
+  unauthenticated API; a private repository fails as unsupported.
+- `reusery_resolve` and `reusery_refine` accept an **optional** `project_id`.
+  Omitting it is exactly the pre-project call.
 - There is deliberately **no `reusery_normalize` tool**: the caller is already
   an AI model, so a second model call would only add cost. The CLI and HTTP
   normalise as before.
 - **`REUSERY_MCP_ENABLE_EXTERNAL_OPERATIONS=false` by default.** It gates only
-  `reusery_discover` and `reusery_enrich`, and is separate from
-  `REUSERY_API_ENABLE_EXTERNAL_OPERATIONS`. The CLI is unaffected by either.
+  `reusery_discover`, `reusery_enrich` and public project scans, and is
+  separate from `REUSERY_API_ENABLE_EXTERNAL_OPERATIONS`. The CLI is
+  unaffected by either.
 - stdout carries MCP frames only; logs go to stderr. There is no remote MCP
   yet — see [docs/mcp.md](docs/mcp.md).
 

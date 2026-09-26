@@ -70,7 +70,7 @@ would be the wrong thing to add before Packet 13 (identity) and Packet 15
   "mcpServers": {
     "reusery": {
       "command": "reusery",
-      "args": ["mcp"],
+      "args": ["mcp", "--project-root", "."],
       "env": {
         "REUSERY_DATABASE_URL": "postgres://…",
         "REUSERY_MCP_ENABLE_EXTERNAL_OPERATIONS": "false"
@@ -83,7 +83,12 @@ would be the wrong thing to add before Packet 13 (identity) and Packet 15
 Only `REUSERY_DATABASE_URL` is required. Configuration examples in this
 repository never contain real credentials.
 
-## The eight tools
+`--project-root` is **process configuration, not a tool argument**: it is the
+one directory a local `reusery_project_scan` may read, validated as a directory
+before the server starts. Omit it and a local scan fails cleanly with
+`project_root_unconfigured`. No tool ever accepts a path.
+
+## The twelve tools
 
 | Tool | Purpose | Annotation highlights |
 | --- | --- | --- |
@@ -95,11 +100,45 @@ repository never contain real credentials.
 | `reusery_inspect_evidence` | Bounded, ordered evidence page. | `readOnlyHint: true`, `openWorldHint: false` |
 | `reusery_inspect_resolution` | A remembered Resolution plus its outcome events. | `readOnlyHint: true`, `openWorldHint: false` |
 | `reusery_report_outcome` | Append a factual post-resolution event. | `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false` |
+| `reusery_project_scan` | Fingerprint the configured local project, or a public repository. | `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: true` |
+| `reusery_project_context` | Fingerprint summary, active preferences, recent decisions. | `readOnlyHint: true`, `openWorldHint: false` |
+| `reusery_project_remember` | Create one explicit, reversible preference. | `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`, `idempotentHint: true` |
+| `reusery_project_forget` | Revoke a preference without deleting it. | `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`, `idempotentHint: true` |
 
 Annotations are **hints, not security boundaries**.
 
 The surface is resolver-native, not an HTTP mirror: there is no
 `reusery_health`, `reusery_ready` or `reusery_openapi`.
+
+## Project context over MCP
+
+`reusery_resolve` and `reusery_refine` accept an **optional** `project_id`.
+Omitting it is exactly the pre-Packet-10 call — the same request, the same
+output, no project fields. With it, the decision additionally carries
+`project_id`, `project_context_hash` and a per-candidate `project_effects` list
+(`dependency_fit`, `module_path`, `module_version`, `tradeoff`).
+
+What project context may do:
+
+- require review when a candidate is a different version of a module the
+  project already requires, or when the project replaces that module;
+- prefer a candidate whose exact module version is already in the manifest,
+  as the **last** tie-break among candidates that are already eligible.
+
+What it may never do: satisfy an unknown requirement, promote a blocked
+candidate, turn a policy review into an allow, or produce Evidence.
+
+`reusery_project_remember` is the **only** way a preference is created.
+`reusery_refine` feedback and `reusery_report_outcome` events never write
+memory, and no tool ever infers a preference on a caller's behalf. The caller
+supplies a structured reason — `not_quite`, `too_many_dependencies`,
+`licence_not_allowed`, `avoid_dependency`, `avoid_reference`,
+`archived_project` — never a value: the value is derived from facts Reusery
+already stored, so a caller cannot invent a licence or a dependency count.
+`reusery_project_forget` revokes rather than deletes, so history stays
+inspectable.
+
+Full reference: [project-context.md](project-context.md).
 
 ### There is no `reusery_normalize` tool
 
@@ -122,20 +161,22 @@ package never constructs a model provider.
 REUSERY_MCP_ENABLE_EXTERNAL_OPERATIONS=false   # the default
 ```
 
-This switch gates **only** `reusery_discover` and `reusery_enrich` — the two
-tools that spend GitHub, pkg.go.dev or deps.dev quota. While it is false:
+This switch gates **`reusery_discover`, `reusery_enrich` and the
+`github_public` source of `reusery_project_scan`** — the three places that
+spend GitHub, pkg.go.dev or deps.dev quota. While it is false:
 
 - the server still starts;
-- `catalog`, `resolve`, `refine`, evidence inspection, resolution inspection
-  and outcome reporting all work;
-- `discover` and `enrich` return a tool error:
+- `catalog`, `resolve`, `refine`, evidence inspection, resolution inspection,
+  outcome reporting, `reusery_project_context`, `reusery_project_remember`,
+  `reusery_project_forget` and a **local** `reusery_project_scan` all work;
+- `discover`, `enrich` and a `github_public` scan return a tool error:
   `external_operations_disabled: discovery and enrichment are disabled for MCP;
   set REUSERY_MCP_ENABLE_EXTERNAL_OPERATIONS=true to enable them`.
 
 **It is separate from `REUSERY_API_ENABLE_EXTERNAL_OPERATIONS`.** The HTTP and
 MCP surfaces each need explicit enablement; neither silently turns the other
-on. The equivalent CLI commands (`reusery discover`, `reusery enrich`) are
-unaffected by either switch.
+on. The equivalent CLI commands (`reusery discover`, `reusery enrich`,
+`reusery project scan`) are unaffected by either switch.
 
 ## Requesting a decision
 
@@ -219,9 +260,10 @@ Reporting an outcome:
 - **does not** change a policy;
 - **does not** automatically re-resolve anything.
 
-It is an append-only log. Packet 10 may later decide how remembered project
-preferences learn from it; Packet 9 only records facts. Notes are capped at
-1000 characters and are never logged.
+It is an append-only log. Packet 10 settled the question it left open: outcome
+events **never** become project preferences. Preference memory comes only from
+`reusery_project_remember`. Notes are capped at 1000 characters and are never
+logged.
 
 ## Errors
 
@@ -301,6 +343,19 @@ token, provider credentials. Logged: operation name, duration and error code.
 
 Not persisted: agent prompts, conversation transcripts, MCP request bodies, MCP
 client identity, MCP protocol sessions. Packet 9 needs none of those.
+
+**No filesystem surface.** No tool accepts `root`, `path`, `directory` or
+`workspace`; the local project root is `--project-root` process configuration.
+A local scan never stores that path — `source_locator` is empty for a local
+project, a local `replace ... => ../foo` records only
+`local_replacement: true`, and a source-level test asserts the returned payload
+contains no part of the root.
+
+**No credentials.** A `github_public` scan uses the unauthenticated API, so a
+private repository fails as `not_found_or_private_repository_unsupported`
+rather than revealing that it exists. No tool accepts a token, a password, a
+secret, a base URL or an API key; a contract test fails the build if one is
+added.
 
 No MCP sampling, elicitation or roots: Reusery tools return deterministic
 application results and the calling agent stays in charge of reasoning and

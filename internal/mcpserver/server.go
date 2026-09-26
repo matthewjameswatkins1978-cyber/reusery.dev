@@ -21,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/app"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/version"
 )
 
@@ -65,6 +66,15 @@ type Dependencies struct {
 	Inspector app.Inspector
 	// Outcomes records factual post-resolution events.
 	Outcomes app.OutcomeRecorder
+	// Projects owns bounded project context and explicit preference memory.
+	// It is nil-able so the contract snapshot can be generated offline.
+	Projects *project.Service
+	// ProjectRoot is the local project root configured when the server
+	// started. It is process configuration, never a tool argument: an agent
+	// must not be handed an arbitrary filesystem-reading tool. Empty means no
+	// local scanning is available and reusery_project_scan answers
+	// project_root_unconfigured for the local source.
+	ProjectRoot string
 	// Logger must write to stderr. nil selects a discarding logger.
 	Logger *slog.Logger
 	// ExternalOperationsEnabled gates reusery_discover and reusery_enrich.

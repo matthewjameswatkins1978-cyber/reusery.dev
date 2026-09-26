@@ -12,6 +12,7 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store"
 )
@@ -20,15 +21,16 @@ import (
 // the meanings the HTTP surface already uses, but it is declared here: MCP is
 // its own transport and does not import internal/api for error types.
 const (
-	CodeInvalidRequest      = "invalid_request"
-	CodeNotFound            = "not_found"
-	CodeConflict            = "conflict"
-	CodeExternalOperations  = "external_operations_disabled"
-	CodeUpstreamRateLimited = "upstream_rate_limited"
-	CodeUpstreamTimeout     = "upstream_timeout"
-	CodeUpstreamUnavailable = "upstream_unavailable"
-	CodeAllProvidersFailed  = "all_providers_failed"
-	CodeInternalError       = "internal_error"
+	CodeInvalidRequest          = "invalid_request"
+	CodeNotFound                = "not_found"
+	CodeConflict                = "conflict"
+	CodeExternalOperations      = "external_operations_disabled"
+	CodeUpstreamRateLimited     = "upstream_rate_limited"
+	CodeUpstreamTimeout         = "upstream_timeout"
+	CodeUpstreamUnavailable     = "upstream_unavailable"
+	CodeAllProvidersFailed      = "all_providers_failed"
+	CodeProjectRootUnconfigured = "project_root_unconfigured"
+	CodeInternalError           = "internal_error"
 )
 
 // errExternalOperations marks a tool gated behind the MCP external-operations
@@ -47,6 +49,7 @@ func CodeOrder() []string {
 		CodeUpstreamTimeout,
 		CodeUpstreamUnavailable,
 		CodeAllProvidersFailed,
+		CodeProjectRootUnconfigured,
 		CodeInternalError,
 	}
 }
@@ -122,7 +125,10 @@ func classify(err error) *ToolError {
 	case err == nil:
 		return nil
 	case errors.Is(err, store.ErrNotFound),
-		errors.Is(err, outcome.ErrResolutionNotFound):
+		errors.Is(err, outcome.ErrResolutionNotFound),
+		errors.Is(err, project.ErrProjectNotFound),
+		errors.Is(err, project.ErrFingerprintNotFound),
+		errors.Is(err, project.ErrPreferenceNotFound):
 		return newToolError(CodeNotFound, "the requested resource does not exist")
 	case errors.Is(err, errExternalOperations):
 		return externalOperationsDisabled()
@@ -148,6 +154,16 @@ func classify(err error) *ToolError {
 	if errors.As(err, &enrichFailed) {
 		return newToolError(CodeAllProvidersFailed,
 			"every applicable enrichment provider failed operationally; inspect the provider issues")
+	}
+	if errors.Is(err, project.ErrGitHubRateLimited) {
+		return newToolError(CodeUpstreamRateLimited, "public GitHub rate limit reached")
+	}
+	if errors.Is(err, project.ErrGitHubUnavailable) {
+		return newToolError(CodeUpstreamUnavailable, "public GitHub is unavailable")
+	}
+	if errors.Is(err, project.ErrPrivateRepositoryUnsupported) {
+		return newToolError(CodeInvalidRequest,
+			"the repository is private or does not exist; private repositories are not supported")
 	}
 	if errors.Is(err, discovery.ErrProviderUnavailable) {
 		return newToolError(CodeUpstreamUnavailable, "a configured discovery provider is unavailable")
@@ -188,6 +204,15 @@ func isRequestShapeError(err error) bool {
 		errors.Is(err, errInvalidPolicyDTO),
 		errors.Is(err, errInvalidCatalog),
 		errors.Is(err, errInvalidEvidencePage),
+		errors.Is(err, project.ErrUnsupportedProjectContext),
+		errors.Is(err, project.ErrInvalidProjectContext),
+		errors.Is(err, project.ErrProjectRootUnconfigured),
+		errors.Is(err, project.ErrUnsupportedSourceKind),
+		errors.Is(err, project.ErrInvalidRepository),
+		errors.Is(err, project.ErrUnknownFeedbackReason),
+		errors.Is(err, project.ErrPreferenceUnsupported),
+		errors.Is(err, project.ErrInvalidRequest),
+		errors.Is(err, project.ErrBoundsExceeded),
 		errors.Is(err, outcome.ErrInvalidKind),
 		errors.Is(err, outcome.ErrInvalidResolutionID),
 		errors.Is(err, outcome.ErrInvalidLimit),

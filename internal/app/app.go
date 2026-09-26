@@ -108,7 +108,7 @@ type OutcomeRecorder interface {
 
 // NewOutcomeRecorder builds the append-only outcome log over the existing
 // repository boundary.
-func NewOutcomeRecorder(store Store, clock func() time.Time) OutcomeRecorder {
+func NewOutcomeRecorder(store outcome.Repository, clock func() time.Time) OutcomeRecorder {
 	return outcome.NewService(store, clock)
 }
 

@@ -68,12 +68,44 @@ func TestContractDescribesExactlyThePacket9Surface(t *testing.T) {
 	}
 
 	want := ToolNames()
-	if len(snapshot.Tools) != len(want) {
-		t.Fatalf("tools = %d, want %d", len(snapshot.Tools), len(want))
+	if len(snapshot.Tools) != 12 {
+		t.Fatalf("tools = %d, want 12", len(snapshot.Tools))
+	}
+	if len(want) != 12 {
+		t.Fatalf("ToolNames() = %d entries, want 12", len(want))
 	}
 	for i, name := range want {
 		if snapshot.Tools[i].Name != name {
 			t.Errorf("tool %d = %q, want %q", i, snapshot.Tools[i].Name, name)
+		}
+	}
+	// Packet 9 names are frozen: adding Packet 10 tools must not rename them.
+	packetNine := []string{
+		ToolCatalog, ToolDiscover, ToolEnrich, ToolInspectEvidence,
+		ToolInspectResolution, ToolRefine, ToolReportOutcome, ToolResolve,
+	}
+	for _, name := range packetNine {
+		found := false
+		for _, tool := range snapshot.Tools {
+			if tool.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Packet 9 tool %q is missing", name)
+		}
+	}
+	for _, name := range []string{ToolProjectScan, ToolProjectContext, ToolProjectRemember, ToolProjectForget} {
+		found := false
+		for _, tool := range snapshot.Tools {
+			if tool.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("project tool %q is missing", name)
 		}
 	}
 	for _, tool := range snapshot.Tools {
@@ -105,8 +137,9 @@ func TestContractAnnotationsAreAccurate(t *testing.T) {
 	}
 
 	want := map[string]struct {
-		readOnly  bool
-		openWorld bool
+		readOnly   bool
+		openWorld  bool
+		idempotent bool
 	}{
 		ToolCatalog:           {readOnly: true, openWorld: false},
 		ToolDiscover:          {readOnly: false, openWorld: true},
@@ -116,6 +149,13 @@ func TestContractAnnotationsAreAccurate(t *testing.T) {
 		ToolInspectEvidence:   {readOnly: true, openWorld: false},
 		ToolInspectResolution: {readOnly: true, openWorld: false},
 		ToolReportOutcome:     {readOnly: false, openWorld: false},
+		ToolProjectScan:       {readOnly: false, openWorld: true},
+		ToolProjectContext:    {readOnly: true, openWorld: false},
+		ToolProjectRemember:   {readOnly: false, openWorld: false, idempotent: true},
+		ToolProjectForget:     {readOnly: false, openWorld: false, idempotent: true},
+	}
+	if len(want) != len(snapshot.Tools) {
+		t.Fatalf("annotation table covers %d tools, contract has %d", len(want), len(snapshot.Tools))
 	}
 	for _, tool := range snapshot.Tools {
 		expected, ok := want[tool.Name]
@@ -137,9 +177,13 @@ func TestContractAnnotationsAreAccurate(t *testing.T) {
 			if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
 				t.Errorf("%s must declare destructiveHint=false", tool.Name)
 			}
-			if tool.Annotations.IdempotentHint {
-				t.Errorf("%s must declare idempotentHint=false", tool.Name)
+			if tool.Annotations.IdempotentHint != expected.idempotent {
+				t.Errorf("%s idempotentHint = %v, want %v",
+					tool.Name, tool.Annotations.IdempotentHint, expected.idempotent)
 			}
+		}
+		if expected.idempotent && tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s cannot be both read-only and idempotent-hinted", tool.Name)
 		}
 	}
 }
@@ -151,6 +195,8 @@ var forbiddenInputProperties = []string{
 	"root", "path", "manifest", "profile_file", "policy_file", "corpus_file",
 	"base_url", "endpoint", "api_key", "apikey", "token", "password", "secret",
 	"openai", "authorization",
+	"directory", "directory_path", "dir", "cwd", "workspace", "repo_path",
+	"local_path", "checkout", "source_path",
 }
 
 // TestContractHasNoFilesystemOrCredentialInputs guards two standing rules at
@@ -175,6 +221,68 @@ func TestContractHasNoFilesystemOrCredentialInputs(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestContractKeepsProjectContextOptional is the additive rule for the agent
+// surface: resolve and refine accept an optional project_id, and omitting it
+// is exactly the Packet 9 call. project_id is never required, and the project
+// tools never take a filesystem path.
+func TestContractKeepsProjectContextOptional(t *testing.T) {
+	var snapshot Snapshot
+	if err := json.Unmarshal(loadCheckedInContract(t), &snapshot); err != nil {
+		t.Fatalf("decode contract: %v", err)
+	}
+
+	byName := map[string]map[string]any{}
+	for _, tool := range snapshot.Tools {
+		var schema map[string]any
+		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
+			t.Fatalf("tool %s input schema: %v", tool.Name, err)
+		}
+		byName[tool.Name] = schema
+	}
+
+	for _, name := range []string{ToolResolve, ToolRefine} {
+		schema, ok := byName[name]
+		if !ok {
+			t.Fatalf("%s missing from the contract", name)
+		}
+		properties, _ := schema["properties"].(map[string]any)
+		if _, present := properties["project_id"]; !present {
+			t.Errorf("%s does not accept project_id", name)
+		}
+		for _, required := range toSlice(schema["required"]) {
+			if required == "project_id" {
+				t.Errorf("%s requires project_id; the Packet 9 call must stay valid", name)
+			}
+		}
+	}
+
+	scan, ok := byName[ToolProjectScan]
+	if !ok {
+		t.Fatalf("%s missing from the contract", ToolProjectScan)
+	}
+	if required := toSlice(scan["required"]); len(required) != 0 {
+		t.Errorf("%s requires %v; a local scan needs no arguments", ToolProjectScan, required)
+	}
+	for _, name := range []string{ToolProjectContext, ToolProjectRemember, ToolProjectForget} {
+		properties, _ := byName[name]["properties"].(map[string]any)
+		if _, present := properties["project_id"]; !present {
+			t.Errorf("%s does not accept project_id", name)
+		}
+	}
+}
+
+// toSlice reads a JSON schema "required" array.
+func toSlice(value any) []string {
+	entries, _ := value.([]any)
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if text, ok := entry.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 // TestContractExposesNoInternalSchemaNames keeps storage implementation

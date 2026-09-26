@@ -17,6 +17,8 @@ enrich evidence
       ↓
 extract facts
       ↓
+load project context (fingerprint + remembered preferences)
+      ↓
 apply project policy
       ↓
 compare / select
@@ -28,7 +30,7 @@ resolve
 remember decision
 ```
 
-Two rules sit underneath that flow.
+Three rules sit underneath that flow.
 
 **UNKNOWN alone cannot justify BUILD LOCALLY.** When plausible candidates exist
 but their required behavioural evidence is missing, Reusery returns
@@ -40,6 +42,15 @@ maintenance and provenance rules are deterministic allow/review/deny
 statements about a project's constraints. They never satisfy, fail or refute a
 behavioural contract requirement, and no provider metadata can create a
 behavioural PASS.
+
+**Project context may change fit. It must never change truth.** Project
+context is the project's manifest fingerprint plus the preferences a person or
+agent explicitly remembered. It may add a review requirement, add an
+inspectable trade-off, or break a tie among candidates that are already
+implementation-eligible. It can never turn blocked into eligible, unknown
+behaviour into satisfied, or policy review into allow — and it never produces
+Evidence. `reusery_refine` and `reusery_report_outcome` never create
+preference memory on their own. See `docs/project-context.md`.
 
 ## Inputs
 

@@ -686,9 +686,9 @@ stays the authored human-readable profile and neither may drift.
 five-value vocabulary, `note` with `char_length(note) <= 1000`, `recorded_at`)
 plus `resolution_feedback_order_idx` on `(resolution_id, recorded_at, id)`.
 Down drops the table. The migration lifecycle integration test covers
-zero → 00001 → 00002 → 00003 → down → up. No `agent_sessions`, `mcp_sessions`,
-`tool_calls`, `conversation_history` or `prompt_history`: MCP sessions are
-transport concerns.
+zero → 00001 → 00002 → 00003 → 00004 → down → up. No `agent_sessions`,
+`mcp_sessions`, `tool_calls`, `conversation_history` or `prompt_history`: MCP
+sessions are transport concerns.
 
 **Outcome feedback semantics.** Package `internal/outcome` is a domain type,
 not `model.Evidence`, because it does not mean what Evidence means. Note limit
@@ -747,6 +747,121 @@ the handshake.
 **CI network policy.** CI may use Testcontainers PostgreSQL, in-memory MCP
 transports, local child processes and `httptest` upstreams. It must never call
 OpenAI, GitHub, pkg.go.dev or deps.dev.
+## Project context and remembered decisions (Packet 10)
+
+Full reference: [project-context.md](project-context.md).
+
+**Standing rule.** Project context may change fit; it must not change truth.
+It can add a review requirement, add an inspectable trade-off, or break a tie
+among candidates that are already implementation-eligible. It can never turn
+blocked into eligible, unknown behaviour into satisfied, or policy review into
+allow, and it never produces Evidence.
+
+**Dependency.** Exactly one new direct dependency: `golang.org/x/mod v0.41.0`,
+package `modfile` — Go's own manifest parser, so `go.mod` and `go.work` are read
+by the implementation that defines them rather than by a hand-rolled parser.
+Reusery uses `modfile.Parse`, `modfile.ParseWork` and `modfile.IsDirectoryPath`.
+Note that `module.IsLocalImport` and `modfile.IsLocalImport` do **not** exist in
+v0.41.0. No dependency graph resolution, no semantic-version library, no
+`golang.org/x/mod/semver` comparison: version fit is exact string comparison.
+
+**Domain package.** `internal/project` owns the whole domain and does not import
+`internal/store/postgres`:
+
+| File | Responsibility |
+| --- | --- |
+| `types.go` | types, closed vocabularies, bounds, sentinel errors |
+| `canonical.go` | canonicalisation, `FingerprintHash`, `ProjectID`, `ContextHash` |
+| `fingerprint.go` | shared fingerprint construction from parsed manifests |
+| `local.go` | bounded local reading (`go.work` + `go.mod` only) |
+| `github.go` | unauthenticated public GitHub reading, immutable SHA first |
+| `preferences.go` | reason → preference derivation, policy overlay, dependency fit |
+| `context.go` | context snapshot, effective policy ID, active preferences |
+| `decide.go` | project-aware decisions through the existing quality service |
+| `service.go` | the `Repository` interface and the storage-facing service |
+
+**Identity and hashes.** `ProjectID` = `project/go/` + SHA-256 over
+`"reusery-project-go-v1\n"` and the sorted unique module paths, so two checkouts
+of the same module are one project and no path is ever stored. The fingerprint
+hash covers modules, requirements and replacements only — never storage IDs,
+`observed_at`, the root, warnings, source kind or locator. The project context
+hash additionally covers the active preference effects a decision saw.
+
+**Local privacy.** Never persists the local root; a `replace ... => ../foo`
+records only `local_replacement: true`; never reads `*.go`, `vendor/` or `.git`;
+never runs `go`, `git` or a shell. Bounds: 32 workspace modules, 512 KiB per
+manifest, 33 manifest files, 8 MiB total, 5 seconds.
+
+**Public GitHub.** `github.NewClient("")` only — no token is ever attached, so a
+private repository fails as unsupported rather than leaking that it exists.
+Resolves the ref to an immutable commit SHA first, then only
+`/repos/{owner}/{repo}`, `/commits/{ref}` and `/contents/{path}`. Never clones,
+never walks the tree. Bounds: 40 requests, 15 seconds, 1 MiB response, 512 KiB
+decoded. Source kinds are a closed pair: `local` and `github_public`.
+
+**Preferences.** Six kinds in a closed vocabulary: `exclude_candidate`,
+`max_direct_dependencies`, `deny_licence`, `avoid_dependency`,
+`avoid_reference`, `deny_archived`. The caller supplies a structured
+`policy.FeedbackReason` and never a value; `DerivePreference` reads facts
+Reusery already stored and fails with `ErrPreferenceUnsupported` when they
+cannot support the requested memory. `remember` is idempotent, `forget` sets
+`forgotten_at` without deleting the row, and `source_reason` records provenance.
+`internal/project` and `internal/outcome` are asserted to share no code: refine
+feedback and outcome events can never become memory.
+
+**Policy overlay.** `ApplyPreferences` deep-clones the stored base policy; the
+effective policy ID becomes `<base-id>+project:<full-context-hash>`.
+`exclude_candidate` is expressed as ordinary structured feedback filtered to
+the candidates present, so the exclusion stays visible in rejection reasons and
+`ErrUnknownFeedbackCandidate` cannot fire.
+
+**Dependency fit.** Five statuses: `not_applicable`, `new_dependency`,
+`existing_exact`, `existing_version_change`, `existing_replaced`. Exact version
+comparison only. Module matching is a longest module-path prefix on path
+segment boundaries, so `github.com/foo` never matches `github.com/foobar/x`.
+`existing_exact` is a late lexicographic tie-break after disposition rank and
+authored preferred reuse mode — never a score. Version-change and replaced fits
+add a trade-off via the exported `resolver.ProjectTradeoffMessage` (one wording,
+shared by the assessment and the per-candidate `project_effects` entry) and
+lower an `implementation_eligible` disposition to `needs_review`.
+
+**Migration 00004_project_context.sql.** Adds `projects` (with a CHECK that a
+`local` row has an empty `source_locator`), `project_fingerprints` (unique per
+`(project_id, sha)`, newest-first index), `project_preferences` (kind and
+`source_reason` CHECKs, `forgotten_at`, partial active index) and
+`project_contexts`, plus `resolutions.project_id` and
+`resolutions.project_context_hash` as `ON DELETE SET NULL` foreign keys. Down
+drops the columns first, then the tables. The lifecycle test observes the schema
+at each version, because the typed resolution loader only works once 00004 is
+applied — older rows are checked with a raw query in between.
+
+**Resolver integration (no second resolver).** `resolver.QualityInput` gained
+optional `ProjectID`, `ProjectContextHash` and `Context map[string]CandidateContext`;
+`QualityRequest` gained exported `ProjectID`/`ProjectContextHash` plus an
+**unexported** context field with an exported setter, so no request document can
+forge it. `Decide` applies candidate context after `Assess` and before the
+feedback-exclusion override. With no project context the Packet 7 path is
+byte-identical, which the packet tests assert directly.
+
+**Surfaces.** CLI: `reusery project scan|show|remember|forget|history`,
+`choose --project-id`, `mcp --project-root`. The local root is process
+configuration and is validated as a directory *before* configuration loads.
+MCP: four additive tools, `project_id` optional on `reusery_resolve` and
+`reusery_refine`, `mcp/reusery-tools-v1.json` regenerated to 12 tools.
+**HTTP and OpenAPI are unchanged**: `go run ./cmd/openapi -check` must still
+pass byte-for-byte, there are no project endpoints, and no filesystem path
+field exists anywhere in the contract.
+
+**Integration tests.** `internal/mcpserver/project_pg_test.go` proves the whole
+rule on real PostgreSQL: same primitive, contract, candidates and base policy —
+only the project context differs — and the decision changes, is explained, and
+returns to its previous answer after a forget. `internal/cli/project_integration_test.go`
+walks scan → show → choose → remember → history → forget → show against real
+PostgreSQL, parsing every JSON document from stdout. `internal/store/postgres/project_integration_test.go`
+proves local and public scans share one fingerprint row and that no table ever
+contains the local root. `internal/mcpserver/stdio_test.go` compiles the real
+binary with `--project-root` and scans it over stdio.
+
 ## Quality checks
 
 ```powershell
@@ -792,7 +907,8 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   the 65s write timeout) and `BaseContext` cancellation propagation, plus the
   graceful-shutdown lifecycle test. `/health` and `/ready` behaviour is
   asserted in `internal/api` now that routes live there.
-- `internal/mcpserver` — the exact 8-tool surface and no normalize/health/openapi
+- `internal/mcpserver` — the exact 12-tool surface (the 8 Packet 9 tools plus
+  the 4 project tools) and no normalize/health/openapi
   tool; tool annotations; server identity and bounded instructions; catalog list
   and detail; discovery and enrichment gates with zero provider calls while
   disabled; resolve producing DEPEND, REFERENCE, BUILD LOCALLY and
@@ -801,10 +917,14 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   cursor validation; remembered-resolution inspection; append-only outcome
   reporting that never mutates a Resolution or creates Evidence; stable error
   codes with no secret leakage; payload byte budgets; the checked-in tool
-  contract (drift, annotations, no filesystem/credential inputs, no internal
-  schema names); official-SDK protocol negotiation including a forced legacy
-  revision; cancellation reaching the tool handler; source-level boundary tests
-  (stdio only, no HTTP transport, no model provider, no stdout writes).
+  contract (drift, annotations, optional `project_id`, no filesystem/credential
+  inputs, no internal schema names); official-SDK protocol negotiation
+  including a forced legacy revision; cancellation reaching the tool handler;
+  source-level boundary tests (stdio only, no HTTP transport, no model
+  provider, no stdout writes); project scanning from a configured root, the
+  project-aware decision explained by its own reasons, remember/forget
+  round-trips, and the PostgreSQL proof that project context changes a decision
+  for factual reasons while outcome events never become preferences.
 - `internal/outcome` — closed kind vocabulary, note boundary in characters,
   unknown Resolution rejection, chronological append-only listing, and proof
   that reporting changes neither Resolution, Evidence nor the decision.
@@ -834,7 +954,11 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   resolution kernel and the application service (Packet 4), and the Packet 7
   quality layer: dispositions, policy-driven assessment, lexicographic
   ordering, tie-break disclosure, bounded shortlisting, feedback-driven
-  re-resolution and `needs_verification` persisting nothing.
+  re-resolution and `needs_verification` persisting nothing. Packet 10 added
+  the additive project-context hooks: `DependencyFit` and its five statuses,
+  `CandidateContext`, the `project_dependency` assessment dimension, the
+  shared `ProjectTradeoffMessage`, and the late exact-version tie-break — with
+  a test proving an empty project context leaves the Packet 7 path unchanged.
 - `internal/policy` — fact extraction (including conflicting and malformed
   artifacts), strict policy loading, every allow/review/deny rule, and each
   supported feedback reason with its refinement and error paths.
@@ -858,7 +982,11 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   `enrich` with an injected enricher, `choose` with an injected repository and
   an authored policy (no network), and `normalize` / `normalize-eval` with an
   injected normaliser, including the proof that none of these leak network or
-  database access into a command that must not have it.
+  database access into a command that must not have it. Packet 10 added the
+  `project` sub-command surface: sub-command and flag validation, mutually
+  exclusive scan sources, required-flag and bound checks, unsupported-reason
+  rejection, usage text, and `reusery mcp --project-root` failing before any
+  configuration is read.
 - `internal/config` — defaults, env overrides, blank-value handling, the strict
   REUSERY_API_ENABLE_EXTERNAL_OPERATIONS parse (true/false only, nonsense
   rejected, default false, never leaking the database URL), missing and
@@ -892,12 +1020,30 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   malformed JSON, oversized body), no hidden retries, and that the API key
   never appears in an error.
 - `internal/store/postgres` (`-tags=integration`) — migration lifecycle across
-  zero → 00001 → 00002 → down → up (including a pre-00002 row loading with an
-  empty `policy_id`), round-trips for every domain object, requirement and
-  rejection ordering, `PolicyID` round-trips, transaction rollback, readiness,
-  and `persist → reload → resolver.Evaluate`.
+  zero → 00001 → 00002 → 00003 → 00004 → down → up (including a pre-00002 row
+  loading with an empty `policy_id`, a pre-00004 row loading with no project
+  context, and the 00004 rollback leaving 00001–00003 intact), round-trips for
+  every domain object, requirement and rejection ordering, `PolicyID`
+  round-trips, transaction rollback, readiness, `persist → reload →
+  resolver.Evaluate`, plus the proof that a local scan and a public scan of the
+  same manifests share one fingerprint row and that no project table ever
+  contains the local root.
 - `internal/cli` (`-tags=integration`) — the full vertical slice against real
   PostgreSQL: migrate → seed → resolve → persist → inspect, for both `depend`
   and `build_locally`; plus public discovery against real PostgreSQL with
   `httptest` providers, including the assertion that persisted provider
-  evidence leaves every required requirement `unknown`.
+  evidence leaves every required requirement `unknown`; plus the Packet 10
+  project slice: scan → show → choose → choose with `--project-id` →
+  remember → history → forget → show, parsing every JSON document from stdout
+  and asserting a failing command leaves stdout empty.
+- `internal/project` — canonicalisation and hash determinism (including hash
+  sensitivity and the fact that the root never enters the project ID), the
+  local scanner's bounds and its refusal to read anything outside `go.work` /
+  `go.mod` (including a source-level test that the package cannot reference
+  `os/exec`, `filepath.Walk` or `os.ReadDir`), the unauthenticated public
+  scanner against `httptest` (immutable SHA, private rejection, unsafe
+  subdirectories, response and workspace bounds, no tree endpoint, no
+  `Authorization` header, and local ↔ public fingerprint agreement), preference
+  derivation for all six reasons with its failure paths, the policy overlay's
+  non-mutation of the stored base, and the proof that `Decide` persists nothing
+  a caller did not ask for.

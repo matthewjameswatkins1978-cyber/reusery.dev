@@ -27,6 +27,7 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/server"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store/postgres"
@@ -88,6 +89,10 @@ type App struct {
 	// NewNormalizer builds the normalisation runner for one command
 	// invocation. It fails only on configuration problems.
 	NewNormalizer func(cfg config.ModelConfig) (Normalizer, error)
+	// NewProjectService builds the project-context service for one command
+	// invocation. The store must provide project context; the PostgreSQL store
+	// always does.
+	NewProjectService func(store Store, clock func() time.Time) (*project.Service, error)
 	// Serve runs the HTTP server until ctx is cancelled.
 	Serve func(ctx context.Context, cfg config.Config, logger *slog.Logger) error
 	// Clock supplies resolution and discovery timestamps.
@@ -97,22 +102,23 @@ type App struct {
 // New returns the production command-line application.
 func New() *App {
 	return &App{
-		Stdout:          os.Stdout,
-		Stderr:          os.Stderr,
-		Stdin:           os.Stdin,
-		LoadConfig:      config.Load,
-		LoadModelConfig: config.LoadModel,
-		OpenStore:       openPostgresStore,
-		LoadBundle:      catalog.Load,
-		LoadProfile:     discovery.LoadProfile,
-		LoadCorpus:      intent.LoadCorpus,
-		LoadPolicy:      policy.Load,
-		LoadFeedback:    policy.LoadFeedback,
-		NewDiscoverer:   app.NewDiscoverer,
-		NewEnricher:     app.NewEnricher,
-		NewNormalizer:   app.NewNormalizer,
-		Serve:           serveHTTP,
-		Clock:           time.Now,
+		Stdout:            os.Stdout,
+		Stderr:            os.Stderr,
+		Stdin:             os.Stdin,
+		LoadConfig:        config.Load,
+		LoadModelConfig:   config.LoadModel,
+		OpenStore:         openPostgresStore,
+		LoadBundle:        catalog.Load,
+		LoadProfile:       discovery.LoadProfile,
+		LoadCorpus:        intent.LoadCorpus,
+		LoadPolicy:        policy.Load,
+		LoadFeedback:      policy.LoadFeedback,
+		NewDiscoverer:     app.NewDiscoverer,
+		NewEnricher:       app.NewEnricher,
+		NewNormalizer:     app.NewNormalizer,
+		NewProjectService: app.NewProjectService,
+		Serve:             serveHTTP,
+		Clock:             time.Now,
 	}
 }
 
@@ -144,6 +150,8 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.commandNormalizeEval(ctx, args[1:])
 	case "mcp":
 		return a.commandMCP(ctx, args[1:])
+	case "project":
+		return a.commandProject(ctx, args[1:])
 	case "version":
 		return a.commandVersion(args[1:])
 	case "catalog":
@@ -481,6 +489,12 @@ type chooseJSON struct {
 	Shortlist       []resolver.CandidateAssessment `json:"shortlist"`
 	Assessments     []resolver.CandidateAssessment `json:"assessments"`
 	AppliedFeedback []policy.AppliedFeedback       `json:"applied_feedback"`
+	// ProjectID, ProjectContextHash and ProjectEffects are present only for a
+	// project-aware decision; without --project-id they stay empty and Packet
+	// 7 output is unchanged.
+	ProjectID          string                  `json:"project_id,omitempty"`
+	ProjectContextHash string                  `json:"project_context_hash,omitempty"`
+	ProjectEffects     []project.ProjectEffect `json:"project_effects,omitempty"`
 }
 
 // commandEnrich fetches attributable external facts for already-discovered
@@ -613,6 +627,8 @@ func (a *App) commandChoose(ctx context.Context, args []string) int {
 	policyPath := flags.String("policy", "", "path to the policy profile, relative to root")
 	feedbackPath := flags.String("feedback", "", "path to a JSON feedback file, relative to root")
 	format := flags.String("format", "text", "output format: text or json")
+	projectID := flags.String("project-id", "",
+		"optional project identity; when set the decision is project-aware")
 	if err := flags.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -664,8 +680,36 @@ func (a *App) commandChoose(ctx context.Context, args []string) int {
 	}
 	defer closeStore()
 
-	service := resolver.NewQualityService(store, a.Clock)
-	stored, runErr := service.Choose(ctx, pol, request)
+	var (
+		stored          resolver.StoredQualityDecision
+		runErr          error
+		projectDecision *project.DecideResult
+	)
+	if *projectID != "" {
+		// Without --project-id this is exactly the Packet 7 behaviour; with it
+		// the same quality service runs under the project's context.
+		projectService, closeService, serviceCode := a.projectService(ctx)
+		if serviceCode != ExitOK {
+			return serviceCode
+		}
+		defer closeService()
+		decided, decideErr := projectService.Decide(ctx, project.DecideRequest{
+			ProjectID:   *projectID,
+			PrimitiveID: request.PrimitiveID,
+			ContractID:  request.ContractID,
+			Candidates:  request.Candidates,
+			BasePolicy:  &pol,
+			Feedback:    request.Feedback,
+		})
+		runErr = decideErr
+		if runErr == nil {
+			projectDecision = &decided
+			stored = decided.Decision
+		}
+	} else {
+		service := resolver.NewQualityService(store, a.Clock)
+		stored, runErr = service.Choose(ctx, pol, request)
+	}
 	if runErr != nil {
 		a.errorf("reusery choose: %v", runErr)
 		return chooseExitCode(runErr)
@@ -684,6 +728,11 @@ func (a *App) commandChoose(ctx context.Context, args []string) int {
 			Shortlist:       stored.Outcome.Decision.Shortlist,
 			Assessments:     stored.Outcome.Decision.Assessments,
 			AppliedFeedback: stored.Outcome.AppliedFeedback,
+		}
+		if projectDecision != nil {
+			payload.ProjectID = projectDecision.ProjectID
+			payload.ProjectContextHash = projectDecision.ContextHash
+			payload.ProjectEffects = projectDecision.Effects
 		}
 		if err := encoder.Encode(payload); err != nil {
 			a.errorf("reusery choose: write output: %v", err)
@@ -1218,7 +1267,16 @@ func (a *App) usage(w io.Writer) {
                                                      structure intent into a provisional contract
   reusery normalize-eval --corpus FILE [--format text|json]
                                                      run the intent evaluation corpus (PAID model calls)
-  reusery mcp                                        serve MCP over stdio for coding agents (needs PostgreSQL)
+  reusery mcp [--project-root DIR]                  serve MCP over stdio for coding agents (needs PostgreSQL)
+  reusery project scan [--source local|github_public] [--root DIR] [--github OWNER/REPO]
+                                                     derive a bounded project fingerprint
+  reusery project show --project-id ID               inspect stored project context
+  reusery project remember --project-id ID --primitive-id ID --candidate-id ID --reason REASON
+                                                     remember an explicit project preference
+  reusery project forget --project-id ID --preference-id N
+                                                     revoke a remembered preference
+  reusery project history --project-id ID [--limit N]
+                                                     list project decision history
   reusery version [--format text|json]               print build metadata
   reusery catalog [--primitive-id ID] [--format text|json]
                                                      list known capabilities, or inspect one

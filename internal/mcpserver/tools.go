@@ -15,6 +15,8 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 )
 
@@ -40,6 +42,10 @@ func ToolNames() []string {
 		ToolEnrich,
 		ToolInspectEvidence,
 		ToolInspectResolution,
+		ToolProjectContext,
+		ToolProjectForget,
+		ToolProjectRemember,
+		ToolProjectScan,
 		ToolRefine,
 		ToolReportOutcome,
 		ToolResolve,
@@ -60,12 +66,20 @@ func readHints(openWorld bool) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld}
 }
 
-// writeHints describes a tool that appends state without destroying anything.
+// writeHints describes a tool that appends state without destroying anything
+// and whose result may differ if it is repeated.
 func writeHints(openWorld bool) *mcp.ToolAnnotations {
+	return writeHintsWith(openWorld, false)
+}
+
+// writeHintsWith describes a tool that appends state without destroying
+// anything. idempotentHint is true only where repeating the call with the
+// same arguments leaves the world unchanged.
+func writeHintsWith(openWorld, idempotent bool) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
 		ReadOnlyHint:    false,
 		DestructiveHint: &falseHint,
-		IdempotentHint:  false,
+		IdempotentHint:  idempotent,
 		OpenWorldHint:   &openWorld,
 	}
 }
@@ -124,6 +138,37 @@ func registerTools(s *mcp.Server, deps Dependencies) {
 		Description: "Record what actually happened after a Resolution was used. Append-only factual feedback: it is not Evidence, never changes a policy and never triggers a re-resolution. Report success only when integration really succeeded.",
 		Annotations: writeHints(false),
 	}, deps.handleReportOutcome)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: ToolProjectScan,
+		Description: "Derive a bounded project fingerprint from manifests only. It reads go.work and go.mod files, never source code, and never runs go or git. " +
+			"A local scan uses the project root configured on the server and never records a filesystem path; a github_public scan reads only a public repository at an immutable commit. " +
+			"Project context may change fit; it is never evidence.",
+		Annotations: writeHints(true),
+	}, deps.handleProjectScan)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: ToolProjectContext,
+		Description: "Inspect a stored project: fingerprint summary, active remembered preferences and recent decisions. " +
+			"Contains no source code and no filesystem path.",
+		Annotations: readHints(false),
+	}, deps.handleProjectContext)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: ToolProjectRemember,
+		Description: "Remember an explicit project preference derived from stored candidate facts. " +
+			"Supply a structured reason, never a preference value: Reusery derives the value from what it already knows. " +
+			"This is the only way a preference is created - reusery_refine and reusery_report_outcome never write memory on their own. " +
+			"Remember only when the preference should apply beyond the current decision.",
+		Annotations: writeHintsWith(false, true),
+	}, deps.handleProjectRemember)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: ToolProjectForget,
+		Description: "Revoke a remembered project preference. The historical row is kept, so forgetting is idempotent " +
+			"and the decision history stays inspectable.",
+		Annotations: writeHintsWith(false, true),
+	}, deps.handleProjectForget)
 }
 
 // summaryText carries the short human-readable summary that accompanies the
@@ -272,9 +317,77 @@ func enrichmentIssueMessages(reports []enrichment.SpecimenReport) []string {
 
 // ------------------------------------------------------------------- resolve
 
+// decisionOutcome is either a plain Packet 7 decision or a project-aware one,
+// normalised so both handlers render identically.
+type decisionOutcome struct {
+	stored      resolver.StoredQualityDecision
+	effects     []project.ProjectEffect
+	projectID   string
+	contextHash string
+}
+
+// decideInput describes what the caller asked for. BasePolicy is the mapped
+// caller policy; hasPolicy reports whether one was supplied at all.
+type decideInput struct {
+	ProjectID   string
+	PrimitiveID string
+	ContractID  string
+	Candidates  []resolver.CandidateRef
+	BasePolicy  policy.Policy
+	HasPolicy   bool
+	Feedback    []policy.Feedback
+}
+
+// decide runs the decision through the same Packet 7 quality service in both
+// modes. With a project id the project service overlays remembered preferences
+// and bounded dependency-fit facts first; without one the behaviour is exactly
+// the Packet 9 behaviour.
+func (d Dependencies) decide(ctx context.Context, in decideInput) (decisionOutcome, error) {
+	if in.ProjectID != "" {
+		if d.Projects == nil {
+			return decisionOutcome{}, classify(errMissingService)
+		}
+		var base *policy.Policy
+		if in.HasPolicy {
+			base = &in.BasePolicy
+		}
+		decided, err := d.Projects.Decide(ctx, project.DecideRequest{
+			ProjectID:   in.ProjectID,
+			PrimitiveID: in.PrimitiveID,
+			ContractID:  in.ContractID,
+			Candidates:  in.Candidates,
+			BasePolicy:  base,
+			Feedback:    in.Feedback,
+		})
+		if err != nil {
+			return decisionOutcome{}, err
+		}
+		return decisionOutcome{
+			stored:      decided.Decision,
+			effects:     decided.Effects,
+			projectID:   decided.ProjectID,
+			contextHash: decided.ContextHash,
+		}, nil
+	}
+
+	if d.Resolver == nil {
+		return decisionOutcome{}, classify(errMissingService)
+	}
+	stored, err := d.Resolver.Choose(ctx, in.BasePolicy, resolver.QualityRequest{
+		PrimitiveID: in.PrimitiveID,
+		ContractID:  in.ContractID,
+		Candidates:  in.Candidates,
+		Feedback:    in.Feedback,
+	})
+	if err != nil {
+		return decisionOutcome{}, err
+	}
+	return decisionOutcome{stored: stored}, nil
+}
+
 func (d Dependencies) handleResolve(ctx context.Context, _ *mcp.CallToolRequest, in ResolveInput) (*mcp.CallToolResult, DecisionResult, error) {
 	var out DecisionResult
-	if d.Resolver == nil || d.Inspector == nil {
+	if d.Inspector == nil {
 		return nil, out, classify(errMissingService)
 	}
 	pol, err := mapPolicy(in.Policy)
@@ -288,16 +401,22 @@ func (d Dependencies) handleResolve(ctx context.Context, _ *mcp.CallToolRequest,
 		return nil, out, classify(err)
 	}
 
-	stored, err := d.Resolver.Choose(ctx, pol, resolver.QualityRequest{
+	decided, err := d.decide(ctx, decideInput{
+		ProjectID:   in.ProjectID,
 		PrimitiveID: in.PrimitiveID,
 		ContractID:  in.ContractID,
 		Candidates:  mapCandidateRefs(in.Candidates),
+		BasePolicy:  pol,
+		HasPolicy:   in.Policy != nil,
 	})
 	if err != nil {
 		return nil, out, classify(err)
 	}
 
-	out = buildDecision(stored, contract)
+	out = buildDecision(decided.stored, contract)
+	out.ProjectID = decided.projectID
+	out.ProjectContextHash = decided.contextHash
+	out.ProjectEffects = decided.effects
 	return summaryText(decisionSummary(out)), out, nil
 }
 
@@ -305,7 +424,7 @@ func (d Dependencies) handleResolve(ctx context.Context, _ *mcp.CallToolRequest,
 
 func (d Dependencies) handleRefine(ctx context.Context, _ *mcp.CallToolRequest, in RefineInput) (*mcp.CallToolResult, RefineResult, error) {
 	var out RefineResult
-	if d.Resolver == nil || d.Inspector == nil {
+	if d.Inspector == nil {
 		return nil, out, classify(errMissingService)
 	}
 	if len(in.Feedback) == 0 {
@@ -320,17 +439,23 @@ func (d Dependencies) handleRefine(ctx context.Context, _ *mcp.CallToolRequest, 
 		return nil, out, classify(err)
 	}
 
-	stored, err := d.Resolver.Choose(ctx, pol, resolver.QualityRequest{
+	decided, err := d.decide(ctx, decideInput{
+		ProjectID:   in.ProjectID,
 		PrimitiveID: in.PrimitiveID,
 		ContractID:  in.ContractID,
 		Candidates:  mapCandidateRefs(in.Candidates),
+		BasePolicy:  pol,
+		HasPolicy:   in.Policy != nil,
 		Feedback:    in.Feedback,
 	})
 	if err != nil {
 		return nil, out, classify(err)
 	}
 
-	out = buildRefine(stored, contract)
+	out = buildRefine(decided.stored, contract)
+	out.ProjectID = decided.projectID
+	out.ProjectContextHash = decided.contextHash
+	out.ProjectEffects = decided.effects
 	return summaryText("Refined. " + decisionSummary(out.DecisionResult)), out, nil
 }
 

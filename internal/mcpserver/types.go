@@ -6,6 +6,7 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 )
 
@@ -227,6 +228,7 @@ type ResolveInput struct {
 	ContractID  string         `json:"contract_id" minLength:"1" jsonschema:"Contract being resolved."`
 	Candidates  []CandidateRef `json:"candidates" jsonschema:"Candidates to consider; send [] when there are none."`
 	Policy      *Policy        `json:"policy,omitempty" jsonschema:"Structured policy. Omit to use the built-in public-go-baseline/v1."`
+	ProjectID   string         `json:"project_id,omitempty" jsonschema:"Optional project identity. When supplied the decision is project-aware; when omitted Packet 9 semantics apply exactly."`
 }
 
 // RefineInput is the reusery_refine request. Refinement is stateless: the
@@ -237,6 +239,7 @@ type RefineInput struct {
 	ContractID  string            `json:"contract_id" minLength:"1" jsonschema:"Contract being resolved."`
 	Candidates  []CandidateRef    `json:"candidates" jsonschema:"The bounded candidate set; send [] when there are none."`
 	Policy      *Policy           `json:"policy,omitempty" jsonschema:"The ORIGINAL base policy, not a previously derived effective policy. Omit for the built-in baseline."`
+	ProjectID   string            `json:"project_id,omitempty" jsonschema:"Optional project identity. When supplied the decision is project-aware; when omitted Packet 9 semantics apply exactly."`
 	Feedback    []policy.Feedback `json:"feedback" jsonschema:"Complete accumulated feedback history using the supported vocabulary: not_quite, too_many_dependencies, licence_not_allowed, avoid_dependency, avoid_reference, archived_project. At least one item."`
 }
 
@@ -278,6 +281,12 @@ type DecisionResult struct {
 	Unknowns     []string                `json:"unknowns" jsonschema:"Required requirement ids still unknown across the assessed candidates; never null."`
 	Reasons      []string                `json:"reasons" jsonschema:"Deterministic reasons for the decision; empty when nothing was persisted."`
 	Rejected     []RejectedEntry         `json:"rejected" jsonschema:"Negative knowledge preserved on the resolution; never null."`
+	// ProjectID, ProjectContextHash and ProjectEffects are present only for a
+	// project-aware decision. Without project_id the output is exactly the
+	// Packet 9 output.
+	ProjectID          string                  `json:"project_id,omitempty" jsonschema:"Project whose context applied, or absent."`
+	ProjectContextHash string                  `json:"project_context_hash,omitempty" jsonschema:"Immutable context snapshot the decision saw."`
+	ProjectEffects     []project.ProjectEffect `json:"project_effects,omitempty" jsonschema:"Per-candidate project dependency fit; absent without project context."`
 }
 
 // RefineResult is the reusery_refine output: the shared decision plus what the

@@ -54,8 +54,8 @@ func TestProtocolNegotiatesCurrentRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(result.Tools) != 8 {
-		t.Errorf("tools = %d, want 8", len(result.Tools))
+	if len(result.Tools) != 12 {
+		t.Errorf("tools = %d, want 12", len(result.Tools))
 	}
 }
 
@@ -74,8 +74,8 @@ func TestLegacyProtocolRevisionStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools on the legacy revision: %v", err)
 	}
-	if len(result.Tools) != 8 {
-		t.Errorf("tools = %d, want 8", len(result.Tools))
+	if len(result.Tools) != 12 {
+		t.Errorf("tools = %d, want 12", len(result.Tools))
 	}
 }
 
@@ -91,8 +91,8 @@ func TestFullToolConversationOverMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(tools.Tools) != 8 {
-		t.Fatalf("tools = %d, want 8", len(tools.Tools))
+	if len(tools.Tools) != 12 {
+		t.Fatalf("tools = %d, want 12", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if tool.Name == "reusery_normalize" {

@@ -16,6 +16,27 @@ type QualityRequest struct {
 	ContractID  string            `json:"contract_id"`
 	Candidates  []CandidateRef    `json:"candidates"`
 	Feedback    []policy.Feedback `json:"feedback,omitempty"`
+	// ProjectID optionally names the project whose context applies. Empty
+	// means the decision is project-agnostic and behaves exactly as Packets
+	// 1-9 did.
+	ProjectID string `json:"project_id,omitempty"`
+	// ProjectContextHash optionally pins the immutable context snapshot that
+	// was applied. The service records it on the Resolution so the decision
+	// never reinterprets itself under a later project state.
+	ProjectContextHash string `json:"project_context_hash,omitempty"`
+
+	// context carries derived project candidate context into the pure decision
+	// layer. It is deliberately unexported: project context is derived by
+	// Reusery from a scanned manifest, never supplied by a caller, so no
+	// request document and no transport can inject or forge it.
+	context map[string]CandidateContext
+}
+
+// WithProjectContext attaches derived candidate context to a copy of the
+// request. It returns a new value so the caller's request stays untouched.
+func (r QualityRequest) WithProjectContext(context map[string]CandidateContext) QualityRequest {
+	r.context = context
+	return r
 }
 
 // StoredQualityDecision pairs the quality outcome with its storage identity.
@@ -79,12 +100,15 @@ func (s *QualityService) Choose(ctx context.Context, pol policy.Policy, request 
 	}
 
 	outcome, err := Decide(QualityInput{
-		Primitive:  primitive,
-		Contract:   contract,
-		Candidates: candidates,
-		Policy:     pol,
-		Feedback:   request.Feedback,
-		Now:        s.clock().UTC(),
+		Primitive:          primitive,
+		Contract:           contract,
+		Candidates:         candidates,
+		Policy:             pol,
+		Feedback:           request.Feedback,
+		Now:                s.clock().UTC(),
+		ProjectID:          request.ProjectID,
+		ProjectContextHash: request.ProjectContextHash,
+		Context:            request.context,
 	})
 	if err != nil {
 		return StoredQualityDecision{}, err

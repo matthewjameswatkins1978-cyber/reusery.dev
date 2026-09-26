@@ -201,12 +201,12 @@ func fixtureSpecimen() model.Specimen {
 	}
 }
 
-// A. Migration lifecycle: zero -> 00001 -> 00002 -> down -> up.
+// A. Migration lifecycle: zero -> 00001 -> 00002 -> 00003 -> 00004 -> down -> up.
 //
-// Packet 7 adds resolutions.policy_id. The lifecycle deliberately observes the
-// schema between the two migrations, because the whole point of 00002 is that
-// a resolution written by a Packet 1-6 binary keeps loading afterwards with an
-// empty PolicyID.
+// Packet 7 adds resolutions.policy_id and Packet 10 adds the project domain.
+// The lifecycle deliberately observes the schema between migrations, because
+// the whole point is that a resolution written by an older binary keeps
+// loading afterwards with an empty PolicyID and no project context.
 func TestIntegrationMigrationLifecycle(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
@@ -237,21 +237,29 @@ func TestIntegrationMigrationLifecycle(t *testing.T) {
 		t.Fatal("resolution_feedback must not exist before 00003")
 	}
 
-	store := NewStore(pool)
-	old, err := store.GetResolution(ctx, oldID)
-	if err != nil {
+	// A Packet 1-6 resolution written before 00002 keeps an empty policy id.
+	// The check is a raw query because the typed loader only exists once the
+	// current schema does.
+	var policyID string
+	if err := pool.QueryRow(ctx,
+		"SELECT coalesce(policy_id, '') FROM resolutions WHERE id = $1", oldID).Scan(&policyID); err != nil {
 		t.Fatalf("load pre-00002 resolution: %v", err)
 	}
-	if old.PolicyID != "" {
-		t.Errorf("pre-00002 resolution PolicyID = %q, want empty", old.PolicyID)
+	if policyID != "" {
+		t.Errorf("pre-00002 resolution PolicyID = %q, want empty", policyID)
 	}
+	store := NewStore(pool)
 
-	// 00002 -> 00003
-	if err := Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate up to 00003: %v", err)
-	}
+	// 00003
+	migrateUpTo(t, pool, 3)
 	if !tableExists(t, pool, "resolution_feedback") {
 		t.Fatal("resolution_feedback missing after 00003")
+	}
+	if tableExists(t, pool, "projects") {
+		t.Fatal("projects must not exist before 00004")
+	}
+	if columnExists(t, pool, "resolutions", "project_id") {
+		t.Fatal("resolutions.project_id must not exist before 00004")
 	}
 	feedbackID := insertFeedbackRow(t, pool, oldID)
 
@@ -272,7 +280,7 @@ func TestIntegrationMigrationLifecycle(t *testing.T) {
 		t.Fatal("resolutions must survive the 00003 rollback")
 	}
 
-	// up again
+	// up again: applies 00003 and 00004
 	if err := Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate up again: %v", err)
 	}
@@ -299,6 +307,72 @@ func TestIntegrationMigrationLifecycle(t *testing.T) {
 		t.Errorf("feedback rows = %d, want 0 after the 00003 rollback", feedbackCount)
 	}
 	_ = feedbackID
+
+	// 00004 is now applied: the project domain exists and a pre-project
+	// resolution still loads with an empty project identity.
+	for _, name := range []string{"projects", "project_fingerprints", "project_preferences", "project_contexts"} {
+		if !tableExists(t, pool, name) {
+			t.Fatalf("%s missing after 00004", name)
+		}
+	}
+	for _, column := range []string{"project_id", "project_context_hash"} {
+		if !columnExists(t, pool, "resolutions", column) {
+			t.Fatalf("resolutions.%s missing after 00004", column)
+		}
+	}
+	preProject, err := store.GetResolution(ctx, oldID)
+	if err != nil {
+		t.Fatalf("load pre-00004 resolution: %v", err)
+	}
+	if preProject.ProjectID != "" || preProject.ProjectContextHash != "" {
+		t.Errorf("pre-00004 resolution carries project context: %q / %q",
+			preProject.ProjectID, preProject.ProjectContextHash)
+	}
+	if preProject.PolicyID != "" {
+		t.Errorf("pre-00002 resolution PolicyID = %q after 00004, want empty", preProject.PolicyID)
+	}
+
+	// down: 00004 rolls back only its own domain and leaves 00001-00003 alone.
+	if err := MigrateDown(ctx, pool); err != nil {
+		t.Fatalf("migrate down (00004): %v", err)
+	}
+	for _, name := range []string{"projects", "project_fingerprints", "project_preferences", "project_contexts"} {
+		if tableExists(t, pool, name) {
+			t.Fatalf("%s survived the 00004 rollback", name)
+		}
+	}
+	for _, column := range []string{"project_id", "project_context_hash"} {
+		if columnExists(t, pool, "resolutions", column) {
+			t.Fatalf("resolutions.%s survived the 00004 rollback", column)
+		}
+	}
+	if !tableExists(t, pool, "resolution_feedback") {
+		t.Fatal("resolution_feedback must survive the 00004 rollback")
+	}
+	if !columnExists(t, pool, "resolutions", "policy_id") {
+		t.Fatal("policy_id must survive the 00004 rollback")
+	}
+	// The row itself survives: a rollback never drops decisions.
+	var survived string
+	if err := pool.QueryRow(ctx,
+		"SELECT coalesce(policy_id, '') FROM resolutions WHERE id = $1", oldID).Scan(&survived); err != nil {
+		t.Fatalf("pre-00002 resolution must survive the 00004 rollback: %v", err)
+	} else if survived != "" {
+		t.Errorf("pre-00002 resolution PolicyID = %q after the 00004 rollback, want empty", survived)
+	}
+
+	// up again: 00004 returns with the same shape.
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate up after 00004 rollback: %v", err)
+	}
+	for _, name := range []string{"projects", "project_fingerprints", "project_preferences", "project_contexts"} {
+		if !tableExists(t, pool, name) {
+			t.Fatalf("%s missing after the 00004 down/up", name)
+		}
+	}
+	if _, err := store.GetResolution(ctx, oldID); err != nil {
+		t.Fatalf("pre-00002 resolution must survive the 00004 down/up: %v", err)
+	}
 }
 
 // insertFeedbackRow writes one outcome event so the 00003 rollback has

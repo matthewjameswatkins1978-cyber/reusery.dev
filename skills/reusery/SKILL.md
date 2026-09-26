@@ -42,25 +42,31 @@ Reusery is not a substitute for reading the code you are integrating.
 
 ## The workflow
 
-1. **`reusery_catalog`** with no arguments — see which capabilities exist.
-2. If a relevant primitive exists, call **`reusery_catalog`** again with
+1. **`reusery_project_scan`** (optional, local source) — if the server was
+   started with `--project-root`, one scan gives you a `project_id`. Pass that
+   `project_id` to every resolve and refine below. Without a `project_id`
+   nothing is remembered about the project and the decision is exactly the
+   Packet 9 behaviour.
+2. **`reusery_catalog`** with no arguments — see which capabilities exist.
+3. If a relevant primitive exists, call **`reusery_catalog`** again with
    `primitive_id` to read its contract and ordered requirements.
-3. Formulate **bounded discovery queries** yourself: short, specific, and
+4. Formulate **bounded discovery queries** yourself: short, specific, and
    phrased as an engineer would search.
-4. **`reusery_discover`** — only if external operations are enabled. If it
+5. **`reusery_discover`** — only if external operations are enabled. If it
    returns `external_operations_disabled`, skip discovery and reason from the
    contract alone.
-5. **`reusery_enrich`** — when licence, dependency or maintenance facts would
+6. **`reusery_enrich`** — when licence, dependency or maintenance facts would
    change your decision. Skip it when they would not.
-6. **`reusery_resolve`** with the candidates you care about. Omit `policy` to
-   use the built-in `public-go-baseline/v1`, or supply a complete structured
-   policy when you know the constraints.
-7. **Interpret the disposition honestly** (see below).
-8. If the fit is poor, **`reusery_refine`** with one of the supported reasons.
-9. **`reusery_inspect_evidence`** only when uncertainty actually matters — it
-   is bounded and costs tokens.
-10. Integrate according to the **actual** outcome semantics.
-11. **`reusery_report_outcome`** only after something factual happened.
+7. **`reusery_resolve`** with the candidates you care about, plus `project_id`
+   when you have one. Omit `policy` to use the built-in
+   `public-go-baseline/v1`, or supply a complete structured policy when you
+   know the constraints.
+8. **Interpret the disposition honestly** (see below).
+9. If the fit is poor, **`reusery_refine`** with one of the supported reasons.
+10. **`reusery_inspect_evidence`** only when uncertainty actually matters — it
+    is bounded and costs tokens.
+11. Integrate according to the **actual** outcome semantics.
+12. **`reusery_report_outcome`** only after something factual happened.
 
 ## Reading a decision
 
@@ -108,12 +114,52 @@ same bounded candidate set, and the **complete accumulated feedback history**.
 Do not feed a previously returned `effective_policy` back in as the base: that
 applies feedback twice.
 
-## Current limitations (Packet 9)
+## Project context
 
-- **There is no automatic project fingerprint.** Reusery does not know your
-  runtime, platform, target architecture or licence requirements. Supply them
-  explicitly in the policy when you know them, and never invent constraints
-  the project did not state. Project context arrives in Packet 10.
+Four tools describe the project you are deciding for:
+
+| Tool | Use |
+| --- | --- |
+| `reusery_project_scan` | fingerprint the local project (or a public repository) and get a `project_id` |
+| `reusery_project_context` | read the fingerprint summary, active preferences and recent decisions |
+| `reusery_project_remember` | create one explicit, reversible preference |
+| `reusery_project_forget` | revoke a preference without deleting it |
+
+`reusery_resolve` and `reusery_refine` take an **optional** `project_id`.
+Omitting it is exactly the project-less call.
+
+**Project context may change fit. It must never change truth.** With a
+`project_id`, the decision can additionally:
+
+- require review when a candidate is a different version of a module the
+  project already requires, or when the project replaces that module;
+- show an inspectable `project_effects` trade-off per candidate;
+- prefer a candidate whose exact module version is already in the manifest —
+  as the **last** tie-break among candidates that are already eligible.
+
+It can never make an unknown requirement satisfied, never make a blocked
+candidate eligible, and never turn a policy review into an allow.
+
+### DO NOT AUTO-REMEMBER
+
+- Only `reusery_project_remember` creates memory. Never call it "because
+  refine might want it later".
+- `reusery_refine` and `reusery_report_outcome` never write preferences. Do not
+  treat their success as a memory having been stored.
+- Never invent a preference the user did not ask for. If a person or agent did
+  not explicitly decide something, leave the project without that memory.
+- Never pass a filesystem path, a directory or a credential to any tool. The
+  project root is server configuration; your only input is `project_id`.
+
+## Current limitations (Packet 10)
+
+- **Reusery still does not infer runtime, platform, target architecture or
+  licence requirements.** The fingerprint records manifest facts, not intent.
+  Supply unknown constraints explicitly in the policy when you know them, and
+  never invent constraints the project did not state.
+- **Preferences are explicit and narrow.** They are scoped to one project, and
+  candidate-scoped ones to one primitive as well. Nothing generalises across
+  projects.
 - **Coverage is still narrow.** If no relevant primitive exists, do not force
   the task through an unrelated contract — say so and do normal engineering
   work.

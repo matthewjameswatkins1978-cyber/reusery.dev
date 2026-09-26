@@ -1,7 +1,9 @@
 package mcpserver
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/app"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
@@ -9,6 +11,7 @@ import (
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/outcome"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
 )
 
@@ -439,4 +442,138 @@ func mapOutcomeEvents(values []outcome.StoredFeedback) []OutcomeEvent {
 		})
 	}
 	return out
+}
+
+// ------------------------------------------------------------------ project
+
+func mapProjectScan(result project.ScanResult) ProjectScanResult {
+	modules, counts := mapModules(result.Fingerprint)
+	return ProjectScanResult{
+		ProjectID:         result.Project.ID,
+		Name:              result.Project.Name,
+		SourceKind:        result.Project.SourceKind,
+		SourceLocator:     result.Project.SourceLocator,
+		SourceRevision:    result.SourceRevision,
+		FingerprintSHA256: result.FingerprintSHA256,
+		Modules:           modules,
+		Counts:            counts,
+		Warnings:          nonNilStrings(result.Warnings),
+	}
+}
+
+// mapModules summarises a fingerprint without dumping every dependency, which
+// keeps an agent call cheap while still answering "what does this project
+// actually carry?".
+func mapModules(fingerprint project.Fingerprint) ([]ProjectModuleSummary, ProjectCounts) {
+	modules := make([]ProjectModuleSummary, 0, len(fingerprint.Modules))
+	counts := ProjectCounts{Modules: len(fingerprint.Modules)}
+	for _, module := range fingerprint.Modules {
+		modules = append(modules, ProjectModuleSummary{
+			ModulePath: module.ModulePath,
+			GoVersion:  module.GoVersion,
+			Toolchain:  module.Toolchain,
+		})
+		for _, requirement := range module.Requirements {
+			if requirement.Indirect {
+				counts.IndirectDependencies++
+			} else {
+				counts.DirectDependencies++
+			}
+		}
+		counts.Replacements += len(module.Replacements)
+	}
+	return modules, counts
+}
+
+func mapProjectContext(view project.View) ProjectContextResult {
+	modules, counts := mapModules(view.Fingerprint)
+	preferences := make([]ActivePreference, 0, len(view.Preferences))
+	for _, preference := range view.Preferences {
+		preferences = append(preferences, ActivePreference{
+			ID:           preference.ID,
+			Kind:         preference.Kind,
+			PrimitiveID:  preference.PrimitiveID,
+			CandidateID:  preference.CandidateID,
+			TextValue:    preference.TextValue,
+			IntValue:     preference.IntValue,
+			SourceReason: string(preference.SourceReason),
+			RecordedAt:   formatTime(preference.RecordedAt),
+		})
+	}
+	recent := make([]ResolutionSummary, 0, len(view.Recent))
+	for _, entry := range view.Recent {
+		resolution := entry.Resolution
+		recent = append(recent, ResolutionSummary{
+			ResolutionID:       entry.ID,
+			Outcome:            string(resolution.Outcome),
+			SpecimenID:         resolution.SpecimenID,
+			PolicyID:           resolution.PolicyID,
+			PrimitiveID:        resolution.PrimitiveID,
+			ResolvedAt:         formatTime(resolution.ResolvedAt),
+			ProjectContextHash: resolution.ProjectContextHash,
+		})
+	}
+	return ProjectContextResult{
+		ProjectID:         view.Project.ID,
+		Name:              view.Project.Name,
+		SourceKind:        view.Project.SourceKind,
+		SourceLocator:     view.Project.SourceLocator,
+		SourceRevision:    view.SourceRevision,
+		FingerprintSHA256: view.FingerprintSHA256,
+		Language:          view.Fingerprint.Language,
+		Modules:           modules,
+		Counts:            counts,
+		ActivePreferences: preferences,
+		Forgotten:         view.Forgotten,
+		RecentResolutions: recent,
+	}
+}
+
+// describePreference renders the deterministic effect of a memory so an agent
+// understands what changed without parsing a kind enum itself.
+func describePreference(preference project.Preference) string {
+	switch preference.Kind {
+	case project.PrefExcludeCandidate:
+		return fmt.Sprintf("candidate %s is excluded for primitive %s",
+			preference.CandidateID, preference.PrimitiveID)
+	case project.PrefMaxDirectDeps:
+		if preference.IntValue == nil {
+			return "maximum direct dependencies is unset"
+		}
+		return fmt.Sprintf("maximum direct dependencies set to %d", *preference.IntValue)
+	case project.PrefDenyLicence:
+		return fmt.Sprintf("licence %s denied", preference.TextValue)
+	case project.PrefAvoidDependency:
+		return "dependency reuse mode removed from the effective policy"
+	case project.PrefAvoidReference:
+		return "reference reuse mode removed from the effective policy"
+	case project.PrefDenyArchived:
+		return "archived repositories denied by the effective policy"
+	default:
+		return string(preference.Kind)
+	}
+}
+
+// policyFeedbackReason casts a caller-supplied reason. The derived preference
+// path validates it, so an invented reason fails with invalid_request rather
+// than silently becoming memory.
+func policyFeedbackReason(reason string) policy.FeedbackReason {
+	return policy.FeedbackReason(reason)
+}
+
+// shortDigest shortens a fingerprint for a human-readable summary.
+func shortDigest(digest string) string {
+	if len(digest) <= 12 {
+		return digest
+	}
+	return digest[:12]
+}
+
+// formatTime renders a timestamp as RFC3339, or an empty string for the zero
+// value so an unset field never becomes "0001-01-01T00:00:00Z".
+func formatTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }

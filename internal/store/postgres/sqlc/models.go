@@ -39,6 +39,47 @@ type Primitive struct {
 	ContractID  string
 }
 
+type Project struct {
+	ID            string
+	Name          string
+	SourceKind    string
+	SourceLocator string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type ProjectContext struct {
+	Hash          string
+	ProjectID     string
+	FingerprintID int64
+	ContextJson   []byte
+	CreatedAt     pgtype.Timestamptz
+}
+
+type ProjectFingerprint struct {
+	ID                int64
+	ProjectID         string
+	SchemaVersion     int32
+	FingerprintSha256 string
+	FingerprintJson   []byte
+	SourceRevision    string
+	ObservedAt        pgtype.Timestamptz
+}
+
+type ProjectPreference struct {
+	ID                 int64
+	ProjectID          string
+	Kind               string
+	PrimitiveID        string
+	CandidateID        string
+	TextValue          string
+	IntValue           *int32
+	SourceReason       string
+	SourceResolutionID *int64
+	RecordedAt         pgtype.Timestamptz
+	ForgottenAt        pgtype.Timestamptz
+}
+
 type Rejection struct {
 	ResolutionID int64
 	Position     int32
@@ -56,16 +97,18 @@ type Requirement struct {
 }
 
 type Resolution struct {
-	ID          int64
-	PrimitiveID string
-	ContractID  string
-	Outcome     string
-	SpecimenID  *string
-	Reasons     []string
-	Unknowns    []string
-	EvidenceIds []string
-	ResolvedAt  pgtype.Timestamptz
-	PolicyID    string
+	ID                 int64
+	PrimitiveID        string
+	ContractID         string
+	Outcome            string
+	SpecimenID         *string
+	Reasons            []string
+	Unknowns           []string
+	EvidenceIds        []string
+	ResolvedAt         pgtype.Timestamptz
+	PolicyID           string
+	ProjectID          *string
+	ProjectContextHash *string
 }
 
 type ResolutionFeedback struct {

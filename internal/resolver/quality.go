@@ -90,9 +90,59 @@ type QualityDecision struct {
 	PolicyID    string                `json:"policy_id"`
 }
 
+// DependencyFit describes how a dependency-mode candidate relates to the
+// project manifest that would receive it. It is a bounded project fact, never
+// Evidence and never a behavioural claim.
+type DependencyFit string
+
+const (
+	// FitNotApplicable means the candidate is not considered in dependency
+	// mode, so the project manifest says nothing about it.
+	FitNotApplicable DependencyFit = "not_applicable"
+	// FitNewDependency means no currently required module provides the
+	// candidate package. It is neutral: not good, not bad.
+	FitNewDependency DependencyFit = "new_dependency"
+	// FitExistingExact means the project already requires the matching module
+	// at exactly the candidate revision. A deterministic positive integration
+	// fact and nothing more.
+	FitExistingExact DependencyFit = "existing_exact"
+	// FitExistingVersionChange means the module exists at another version.
+	// Exact comparison only: no semantic-version reasoning happens here, so a
+	// change simply requires review rather than a silent upgrade.
+	FitExistingVersionChange DependencyFit = "existing_version_change"
+	// FitExistingReplaced means the module has a Go replace directive, so
+	// upstream package metadata may not describe what the project actually
+	// depends on. Requires review.
+	FitExistingReplaced DependencyFit = "existing_replaced"
+)
+
+// CandidateContext is the bounded project context available to one candidate
+// during a decision. It is derived from a scanned manifest by Reusery and is
+// never caller-supplied.
+type CandidateContext struct {
+	DependencyFit DependencyFit
+	// ModulePath is the project module the candidate package belongs to.
+	ModulePath string
+	// ModuleVersion is the version that module currently requires.
+	ModuleVersion string
+}
+
+// DimensionProjectDependency is the assessment dimension for bounded project
+// context facts. These are project inputs, not provider Evidence, so no
+// EvidenceID is ever attached to them.
+const DimensionProjectDependency = "project_dependency"
+
+// projectTieBreakMessage is the disclosed reason when project context, and
+// only project context, separated two otherwise equivalent candidates.
+const projectTieBreakMessage = "candidate was preferred among otherwise equivalent " +
+	"options because its exact module version is already present in project %s"
+
 // QualityInput is the pure input to the quality layer. Candidate order in the
 // request is deliberately not quality order: Decide reorders everything through
 // deterministic policy semantics.
+//
+// ProjectID, ProjectContextHash and Context are all optional. When they are
+// empty the decision is byte-for-byte the Packets 1-9 decision.
 type QualityInput struct {
 	Primitive  model.Primitive
 	Contract   model.Contract
@@ -100,6 +150,15 @@ type QualityInput struct {
 	Policy     policy.Policy
 	Feedback   []policy.Feedback
 	Now        time.Time
+
+	// ProjectID names the project whose context applies; empty means none.
+	ProjectID string
+	// ProjectContextHash pins the immutable context snapshot recorded on the
+	// Resolution.
+	ProjectContextHash string
+	// Context is keyed by specimen ID. A key with no matching candidate is
+	// ignored; a candidate with no key sees no project context at all.
+	Context map[string]CandidateContext
 }
 
 // QualityOutcome is the decision plus the policy actually applied and the
@@ -269,6 +328,10 @@ func Decide(in QualityInput) (QualityOutcome, error) {
 		}
 		facts := factsByCandidate[option.Specimen.ID]
 		assessment := Assess(option.Specimen, option.ReuseMode, in.Contract, evaluation, facts, effective, in.Now)
+		// Project context may only lower a disposition or add a trade-off;
+		// it runs before the feedback exclusion so an explicit exclusion
+		// still wins outright.
+		applyCandidateContext(&assessment, in.Context[option.Specimen.ID])
 		if exclusion, excluded := exclusions[option.Specimen.ID]; excluded {
 			assessment.Disposition = Blocked
 			assessment.Cons = append(assessment.Cons, Tradeoff{
@@ -280,16 +343,25 @@ func Decide(in QualityInput) (QualityOutcome, error) {
 		pinned[option.Specimen.ID] = option.Specimen.Source.Revision != ""
 	}
 
-	ordered := orderCandidates(candidates, effective, pinned)
+	ordered := orderCandidates(candidates, effective, pinned, in.Context)
 
 	selection := selectCandidate(ordered)
 	note := ""
 	if selection >= 0 && selection+1 < len(ordered) {
 		if indistinguishable(ordered[selection].assessment, ordered[selection+1].assessment, effective, pinned) {
-			note = tieBreakMessage
+			switch {
+			case in.ProjectID != "" && dependencyFitRank(in.Context[ordered[selection].assessment.SpecimenID]) !=
+				dependencyFitRank(in.Context[ordered[selection+1].assessment.SpecimenID]):
+				// The two are equivalent on policy, behaviour and preferred
+				// mode; only project context separated them, and that has to
+				// be disclosed rather than passed off as "better".
+				note = fmt.Sprintf(projectTieBreakMessage, in.ProjectID)
+			default:
+				note = tieBreakMessage
+			}
 			ordered[selection].assessment.Unknowns = append(ordered[selection].assessment.Unknowns, Tradeoff{
 				Dimension: "ordering",
-				Message:   tieBreakMessage,
+				Message:   note,
 			})
 		}
 	}
@@ -370,7 +442,7 @@ func validateQualityInput(in QualityInput) error {
 	return nil
 }
 
-func orderCandidates(candidates []qualityCandidate, pol policy.Policy, pinned map[string]bool) []qualityCandidate {
+func orderCandidates(candidates []qualityCandidate, pol policy.Policy, pinned map[string]bool, context map[string]CandidateContext) []qualityCandidate {
 	ordered := append([]qualityCandidate(nil), candidates...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i].assessment, ordered[j].assessment
@@ -384,6 +456,15 @@ func orderCandidates(candidates []qualityCandidate, pol policy.Policy, pinned ma
 			if pa != pb {
 				return pa < pb
 			}
+			// Late lexicographic tie-break: among otherwise equivalent
+			// eligible candidates, reuse what the project already carries.
+			// It never outranks behavioural fit, policy eligibility or an
+			// authored preferred reuse mode, and it is not a score.
+			fa := dependencyFitRank(context[a.SpecimenID])
+			fb := dependencyFitRank(context[b.SpecimenID])
+			if fa != fb {
+				return fa < fb
+			}
 		case ReferenceOnly:
 			pa, pb := pinnedRank(pinned[a.SpecimenID]), pinnedRank(pinned[b.SpecimenID])
 			if pa != pb {
@@ -396,6 +477,59 @@ func orderCandidates(candidates []qualityCandidate, pol policy.Policy, pinned ma
 		return a.ReuseMode < b.ReuseMode
 	})
 	return ordered
+}
+
+// dependencyFitRank orders an exact-present dependency ahead of any other fit.
+// Everything except existing_exact ranks equally, because new_dependency is
+// neutral rather than bad.
+func dependencyFitRank(context CandidateContext) int {
+	if context.DependencyFit == FitExistingExact {
+		return 0
+	}
+	return 1
+}
+
+// ProjectTradeoffMessage renders the disclosed trade-off a project fact adds
+// to one candidate assessment. It is exported so the project layer can carry
+// exactly the same sentence in its per-candidate effect: one wording, one
+// meaning. It returns an empty string when the fit adds no trade-off.
+func ProjectTradeoffMessage(fit DependencyFit, modulePath, moduleVersion, candidateRevision string) string {
+	switch fit {
+	case FitExistingExact:
+		return "exact candidate module version is already present in the project manifest"
+	case FitExistingVersionChange:
+		return fmt.Sprintf("project requires %s at %s; candidate is %s; version change requires review",
+			modulePath, moduleVersion, candidateRevision)
+	case FitExistingReplaced:
+		return fmt.Sprintf("project replaces %s; dependency semantics require review", modulePath)
+	default:
+		return ""
+	}
+}
+
+// applyCandidateContext overlays bounded project facts onto one assessment.
+//
+// It may only lower a disposition, add a trade-off, or (via orderCandidates)
+// break a tie between already-eligible candidates. It can never turn blocked
+// into eligible, unknown behaviour into satisfied, or policy review into
+// allow. A candidate whose behaviour is already needs_verification stays
+// needs_verification: uncertainty is never upgraded into review or approval.
+func applyCandidateContext(assessment *CandidateAssessment, context CandidateContext) {
+	message := ProjectTradeoffMessage(context.DependencyFit,
+		context.ModulePath, context.ModuleVersion, assessment.Source.Revision)
+	if message == "" {
+		return
+	}
+	tradeoff := Tradeoff{Dimension: DimensionProjectDependency, Message: message}
+	if context.DependencyFit == FitExistingExact {
+		assessment.Pros = append(assessment.Pros, tradeoff)
+		return
+	}
+	assessment.Cons = append(assessment.Cons, tradeoff)
+	// A silent upgrade or downgrade of the project is never our call.
+	if assessment.Disposition == ImplementationEligible {
+		assessment.Disposition = NeedsReview
+	}
 }
 
 // pinnedRank sorts a pinned or versioned provenance before an unpinned one.
@@ -739,14 +873,16 @@ func blockedReasons(contract model.Contract, candidate qualityCandidate) []strin
 
 func newResolution(in QualityInput, pol policy.Policy) model.Resolution {
 	return model.Resolution{
-		PrimitiveID: in.Primitive.ID,
-		ContractID:  in.Contract.ID,
-		Reasons:     []string{},
-		Rejected:    []model.Rejection{},
-		Unknowns:    []string{},
-		EvidenceIDs: []string{},
-		PolicyID:    pol.ID,
-		ResolvedAt:  in.Now,
+		PrimitiveID:        in.Primitive.ID,
+		ContractID:         in.Contract.ID,
+		Reasons:            []string{},
+		Rejected:           []model.Rejection{},
+		Unknowns:           []string{},
+		EvidenceIDs:        []string{},
+		PolicyID:           pol.ID,
+		ProjectID:          in.ProjectID,
+		ProjectContextHash: in.ProjectContextHash,
+		ResolvedAt:         in.Now,
 	}
 }
 

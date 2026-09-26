@@ -104,8 +104,16 @@ type Resolution struct {
 	// PolicyID names the deterministic policy profile that justified this
 	// decision. Empty for resolutions produced before Packet 7, and for the
 	// Packet 4 kernel which has no policy layer.
-	PolicyID   string    `json:"policy_id,omitempty"`
-	ResolvedAt time.Time `json:"resolved_at"`
+	PolicyID string `json:"policy_id,omitempty"`
+	// ProjectID names the project whose context influenced this decision.
+	// Empty for every decision made without project context, which includes
+	// all Packets 1-9 history.
+	ProjectID string `json:"project_id,omitempty"`
+	// ProjectContextHash pins the immutable project-context snapshot that was
+	// applied, so the decision never silently reinterprets itself under
+	// today's project state.
+	ProjectContextHash string    `json:"project_context_hash,omitempty"`
+	ResolvedAt         time.Time `json:"resolved_at"`
 }
 
 // Rejection is negative knowledge worth preserving.

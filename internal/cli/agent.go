@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -132,12 +133,20 @@ func sortedCopy(values []string) []string {
 func (a *App) commandMCP(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	flags.SetOutput(a.Stderr)
+	projectRoot := flags.String("project-root", "",
+		"local project root configured for this MCP server; process configuration, never a tool argument")
 	if err := flags.Parse(args); err != nil {
 		return ExitUsage
 	}
 	if flags.NArg() > 0 {
 		a.errorf("reusery mcp: unexpected arguments: %s", strings.Join(flags.Args(), " "))
 		return ExitUsage
+	}
+	if *projectRoot != "" {
+		if info, err := os.Stat(*projectRoot); err != nil || !info.IsDir() {
+			a.errorf("reusery mcp: --project-root %q is not a directory", *projectRoot)
+			return ExitUsage
+		}
 	}
 
 	cfg, err := a.LoadConfig()
@@ -152,10 +161,20 @@ func (a *App) commandMCP(ctx context.Context, args []string) int {
 	}
 	defer closeStore()
 
+	// Project context is part of the standing surface: if the store cannot
+	// provide it the server would advertise tools it cannot run, so it fails
+	// before the first frame rather than mid-conversation.
+	projectService, err := app.NewProjectService(store, a.Clock)
+	if err != nil {
+		a.errorf("reusery mcp: project context unavailable: %v", err)
+		return ExitError
+	}
+
 	logger := slog.New(slog.NewTextHandler(a.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	logger.Info("starting mcp server",
 		"transport", "stdio",
 		"external_operations", cfg.MCPEnableExternalOperations,
+		"project_root", *projectRoot,
 		"version", version.Version)
 
 	if err := mcpserver.Run(ctx, mcpserver.Dependencies{
@@ -165,8 +184,10 @@ func (a *App) commandMCP(ctx context.Context, args []string) int {
 		Resolver:                  app.NewQualityResolver(store, a.Clock),
 		Inspector:                 store,
 		Outcomes:                  app.NewOutcomeRecorder(store, a.Clock),
+		Projects:                  projectService,
 		Logger:                    logger,
 		ExternalOperationsEnabled: cfg.MCPEnableExternalOperations,
+		ProjectRoot:               *projectRoot,
 	}); err != nil && !errors.Is(err, context.Canceled) {
 		a.errorf("reusery mcp: %v", redact(err, cfg.DatabaseURL))
 		return ExitError

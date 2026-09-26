@@ -1,11 +1,15 @@
 package postgres
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/project"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store/postgres/sqlc"
 )
 
@@ -148,7 +152,12 @@ func resolutionToInsert(r model.Resolution) sqlc.InsertResolutionParams {
 		Unknowns:    nonNilStrings(r.Unknowns),
 		EvidenceIds: nonNilStrings(r.EvidenceIDs),
 		PolicyID:    r.PolicyID,
-		ResolvedAt:  timeToPg(r.ResolvedAt),
+		// Empty means the decision carried no project context, which is every
+		// Packet 1-9 decision. NULL rather than '' because both columns are
+		// foreign keys.
+		ProjectID:          optionalString(r.ProjectID),
+		ProjectContextHash: optionalString(r.ProjectContextHash),
+		ResolvedAt:         timeToPg(r.ResolvedAt),
 	}
 }
 
@@ -170,16 +179,18 @@ func resolutionFromRows(row sqlc.Resolution, rejections []sqlc.Rejection) model.
 		})
 	}
 	return model.Resolution{
-		PrimitiveID: row.PrimitiveID,
-		ContractID:  row.ContractID,
-		Outcome:     model.Outcome(row.Outcome),
-		SpecimenID:  derefString(row.SpecimenID),
-		Reasons:     nonNilStrings(row.Reasons),
-		Rejected:    rejected,
-		Unknowns:    nonNilStrings(row.Unknowns),
-		EvidenceIDs: nonNilStrings(row.EvidenceIds),
-		PolicyID:    row.PolicyID,
-		ResolvedAt:  row.ResolvedAt.Time,
+		PrimitiveID:        row.PrimitiveID,
+		ContractID:         row.ContractID,
+		Outcome:            model.Outcome(row.Outcome),
+		SpecimenID:         derefString(row.SpecimenID),
+		Reasons:            nonNilStrings(row.Reasons),
+		Rejected:           rejected,
+		Unknowns:           nonNilStrings(row.Unknowns),
+		EvidenceIDs:        nonNilStrings(row.EvidenceIds),
+		PolicyID:           row.PolicyID,
+		ProjectID:          derefString(row.ProjectID),
+		ProjectContextHash: derefString(row.ProjectContextHash),
+		ResolvedAt:         row.ResolvedAt.Time,
 	}
 }
 
@@ -228,4 +239,175 @@ func stringsToReuseModes(values []string) []model.ReuseMode {
 		out[i] = model.ReuseMode(value)
 	}
 	return out
+}
+
+// --------------------------------------------------------------- projects
+
+func projectToUpsert(p project.Project) sqlc.UpsertProjectParams {
+	return sqlc.UpsertProjectParams{
+		ID:            p.ID,
+		Name:          p.Name,
+		SourceKind:    string(p.SourceKind),
+		SourceLocator: p.SourceLocator,
+		CreatedAt:     timeToPg(p.CreatedAt),
+	}
+}
+
+func projectFromRow(row sqlc.Project) project.Project {
+	return project.Project{
+		ID:            row.ID,
+		Name:          row.Name,
+		SourceKind:    project.SourceKind(row.SourceKind),
+		SourceLocator: row.SourceLocator,
+		CreatedAt:     row.CreatedAt.Time,
+		UpdatedAt:     row.UpdatedAt.Time,
+	}
+}
+
+func fingerprintToInsert(f project.StoredFingerprint) (sqlc.InsertProjectFingerprintParams, error) {
+	encoded, err := json.Marshal(f.Fingerprint)
+	if err != nil {
+		return sqlc.InsertProjectFingerprintParams{}, fmt.Errorf("encode fingerprint: %w", err)
+	}
+	return sqlc.InsertProjectFingerprintParams{
+		ProjectID:         f.ProjectID,
+		SchemaVersion:     int32(f.SchemaVersion),
+		FingerprintSha256: f.SHA256,
+		FingerprintJson:   encoded,
+		SourceRevision:    f.SourceRevision,
+		ObservedAt:        timeToPg(f.ObservedAt),
+	}, nil
+}
+
+// fingerprintFromRow reloads a stored fingerprint and refuses to hand back
+// anything that does not validate against the supported schema. Guessing at a
+// corrupt project fingerprint would silently misattribute every decision that
+// cites it.
+func fingerprintFromRow(row sqlc.ProjectFingerprint) (project.StoredFingerprint, error) {
+	var fingerprint project.Fingerprint
+	if err := json.Unmarshal(row.FingerprintJson, &fingerprint); err != nil {
+		return project.StoredFingerprint{}, fmt.Errorf("%w: stored fingerprint is not valid JSON: %v",
+			project.ErrInvalidProjectContext, err)
+	}
+	if fingerprint.SchemaVersion != project.SchemaVersion ||
+		fingerprint.Language == "" || len(fingerprint.Modules) == 0 {
+		return project.StoredFingerprint{}, fmt.Errorf(
+			"%w: stored fingerprint does not match schema version %d",
+			project.ErrInvalidProjectContext, project.SchemaVersion)
+	}
+	return project.StoredFingerprint{
+		ID:             row.ID,
+		ProjectID:      row.ProjectID,
+		SchemaVersion:  int(row.SchemaVersion),
+		SHA256:         row.FingerprintSha256,
+		Fingerprint:    fingerprint,
+		SourceRevision: row.SourceRevision,
+		ObservedAt:     row.ObservedAt.Time,
+	}, nil
+}
+
+func preferenceToInsert(p project.Preference) sqlc.InsertProjectPreferenceParams {
+	return sqlc.InsertProjectPreferenceParams{
+		ProjectID:          p.ProjectID,
+		Kind:               string(p.Kind),
+		PrimitiveID:        p.PrimitiveID,
+		CandidateID:        p.CandidateID,
+		TextValue:          p.TextValue,
+		IntValue:           intPointer(p.IntValue),
+		SourceReason:       string(p.SourceReason),
+		SourceResolutionID: int64Pointer(p.SourceResolutionID),
+		RecordedAt:         timeToPg(p.RecordedAt),
+	}
+}
+
+func preferenceFromRow(row sqlc.ProjectPreference) project.Preference {
+	return project.Preference{
+		ID:                 row.ID,
+		ProjectID:          row.ProjectID,
+		Kind:               project.PreferenceKind(row.Kind),
+		PrimitiveID:        row.PrimitiveID,
+		CandidateID:        row.CandidateID,
+		TextValue:          row.TextValue,
+		IntValue:           int32Pointer(row.IntValue),
+		SourceReason:       policy.FeedbackReason(row.SourceReason),
+		SourceResolutionID: derefInt64(row.SourceResolutionID),
+		RecordedAt:         row.RecordedAt.Time,
+		ForgottenAt:        forgottenTime(row.ForgottenAt),
+	}
+}
+
+func contextToUpsert(c project.StoredContext) (sqlc.UpsertProjectContextParams, error) {
+	encoded, err := json.Marshal(c.Context)
+	if err != nil {
+		return sqlc.UpsertProjectContextParams{}, fmt.Errorf("encode project context: %w", err)
+	}
+	return sqlc.UpsertProjectContextParams{
+		Hash:          c.Hash,
+		ProjectID:     c.ProjectID,
+		FingerprintID: c.FingerprintID,
+		ContextJson:   encoded,
+		CreatedAt:     timeToPg(c.CreatedAt),
+	}, nil
+}
+
+// contextFromRow reloads a stored snapshot and refuses anything that does not
+// validate, so a decision can never be reinterpreted through corrupt context.
+func contextFromRow(row sqlc.ProjectContext) (project.StoredContext, error) {
+	var snapshot project.Context
+	if err := json.Unmarshal(row.ContextJson, &snapshot); err != nil {
+		return project.StoredContext{}, fmt.Errorf("%w: stored project context is not valid JSON: %v",
+			project.ErrInvalidProjectContext, err)
+	}
+	if snapshot.SchemaVersion != project.SchemaVersion || snapshot.ProjectID == "" ||
+		snapshot.FingerprintSHA256 == "" {
+		return project.StoredContext{}, fmt.Errorf(
+			"%w: stored project context does not match schema version %d",
+			project.ErrInvalidProjectContext, project.SchemaVersion)
+	}
+	return project.StoredContext{
+		Hash:          row.Hash,
+		ProjectID:     row.ProjectID,
+		FingerprintID: row.FingerprintID,
+		Context:       snapshot,
+		CreatedAt:     row.CreatedAt.Time,
+	}, nil
+}
+
+// forgottenTime converts a nullable timestamp into a domain time, treating
+// NULL as "still active".
+func forgottenTime(value pgtype.Timestamptz) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
+	return value.Time
+}
+
+func intPointer(value *int) *int32 {
+	if value == nil {
+		return nil
+	}
+	converted := int32(*value)
+	return &converted
+}
+
+func int32Pointer(value *int32) *int {
+	if value == nil {
+		return nil
+	}
+	converted := int(*value)
+	return &converted
+}
+
+func int64Pointer(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func derefInt64(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
