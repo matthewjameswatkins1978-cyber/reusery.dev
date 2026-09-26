@@ -145,7 +145,8 @@ replace example.com/local => ../local
 	}
 	// The durable fact is that a replacement exists; the path never survives.
 	encoded := mustJSON(t, result.Fingerprint)
-	for _, forbidden := range []string{"../local", string(filepath.Separator)} {
+	resolvedSibling := filepath.Clean(filepath.Join(root, "..", "local"))
+	for _, forbidden := range []string{"../local", resolvedSibling, ".."} {
 		if strings.Contains(encoded, forbidden) {
 			t.Errorf("fingerprint leaked %q: %s", forbidden, encoded)
 		}
@@ -318,7 +319,9 @@ func TestScanSkipsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(filepath.Join(outer, "outside"), filepath.Join(root, "linked")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	writeManifest(t, root, "go.work", "go 1.27.1\n\nuse ./linked\n")
+	// The workspace lists the real module and the escaping symlink: only the
+	// first may be read, and the skip must be reported as a warning.
+	writeManifest(t, root, "go.work", "go 1.27.1\n\nuse (\n\t.\n\t./linked\n)\n")
 
 	result, err := ScanLocal(context.Background(), root)
 	if err != nil {
@@ -329,6 +332,15 @@ func TestScanSkipsSymlinkEscape(t *testing.T) {
 	}
 	if len(result.Warnings) == 0 {
 		t.Error("expected a warning for the escaping symlink")
+	}
+	encoded := mustJSON(t, result.Fingerprint)
+	if strings.Contains(encoded, "example.com/outside") {
+		t.Errorf("a manifest behind an escaping symlink was read: %s", encoded)
+	}
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, outer) || strings.Contains(warning, root) {
+			t.Errorf("warning leaked a path: %q", warning)
+		}
 	}
 }
 
