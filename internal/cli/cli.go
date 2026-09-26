@@ -1274,7 +1274,10 @@ func readJSONUnder(root, rel string, into any) error {
 	if strings.TrimSpace(rel) == "" {
 		return errors.New("an empty path was supplied")
 	}
-	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
+	if strings.Contains(rel, `\`) {
+		return fmt.Errorf("%q contains a Windows path separator", rel)
+	}
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") {
 		return fmt.Errorf("%q is not relative to the repository root", rel)
 	}
 	rootAbs, err := filepath.Abs(root)

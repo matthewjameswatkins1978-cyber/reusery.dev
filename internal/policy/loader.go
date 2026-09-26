@@ -361,12 +361,17 @@ func LoadFeedback(root, path string) ([]Feedback, error) {
 
 // resolvePath joins a relative path to root and refuses anything that would
 // leave it. It mirrors the catalogue loader so both file inputs behave the same
-// way.
+// way, and additionally rejects a backslash outright: a Windows-style separator
+// in an authored path must fail identically on every platform rather than being
+// treated as a plain character on POSIX.
 func resolvePath(root, rel string) (string, error) {
 	if strings.TrimSpace(rel) == "" {
 		return "", errors.New("policy: an empty path was supplied")
 	}
-	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
+	if strings.Contains(rel, `\`) {
+		return "", fmt.Errorf("%w: %q contains a Windows path separator", ErrPathEscape, rel)
+	}
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") {
 		return "", fmt.Errorf("%w: %q is absolute", ErrPathEscape, rel)
 	}
 
