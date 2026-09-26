@@ -1,6 +1,10 @@
 {
   "specimen_ids": [
-    "public/pkg.go.dev/github.com%2Fpkg%2Ferrors@v0.9.1",
-    "public/github/repository/golang/tools"
+    "public/pkg.go.dev/github.com%2Fcriyle%2Fgo-sandbox%2Fpkg%2Fpipe@v0.13.7",
+    "public/pkg.go.dev/github.com%2Fgoliatone%2Fgo-command@v0.24.2",
+    "public/pkg.go.dev/github.com%2Fnickalie%2Fgo-binwrapper@v0.0.0-20260217210625-2cc2a03abe15",
+    "public/github/code/kubernetes/utils@b7cde7fd83e33b0b1b0e06f91ac4159e92996136:exec%2Fexec.go",
+    "public/github/code/datawire/dlib@93a09597cb2b8ff6b4f6c6b79a818f7c140afe60:dexec%2Fcmd.go",
+    "public/github/repository/hollis-labs/go-runner"
   ]
 }
