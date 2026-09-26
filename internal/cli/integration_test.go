@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/app"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/catalog"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/config"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
@@ -83,7 +84,7 @@ func newApp(t *testing.T, pool *pgxpool.Pool, databaseURL string) (*App, *bytes.
 		},
 		LoadBundle:    catalog.Load,
 		LoadProfile:   discovery.LoadProfile,
-		NewDiscoverer: newPublicDiscoverer,
+		NewDiscoverer: app.NewDiscoverer,
 		Serve: func(context.Context, config.Config, *slog.Logger) error {
 			return nil
 		},

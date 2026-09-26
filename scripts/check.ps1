@@ -29,7 +29,9 @@ Invoke-Step 'go test ./...'
 Invoke-Step 'go test -tags=integration ./...'
 Invoke-Step 'golangci-lint run ./...'
 Invoke-Step 'govulncheck ./...'
+Invoke-Step 'go run ./cmd/openapi -check openapi/reusery-v1.json'
 Invoke-Step 'go build ./cmd/reusery'
+Invoke-Step 'go build ./cmd/openapi'
 
 Write-Host ""
 Write-Host "All checks passed."

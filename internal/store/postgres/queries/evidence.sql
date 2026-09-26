@@ -13,3 +13,11 @@ SELECT *
 FROM evidence
 WHERE subject_id = $1
 ORDER BY observed_at, id;
+
+-- name: ListEvidencePage :many
+SELECT *
+FROM evidence
+WHERE subject_id = sqlc.arg(subject_id)
+  AND (observed_at, id) > (sqlc.arg(after_observed_at)::timestamptz, sqlc.arg(after_id)::text)
+ORDER BY observed_at, id
+LIMIT sqlc.arg(page_limit)::int;

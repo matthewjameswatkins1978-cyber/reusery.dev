@@ -3,6 +3,7 @@ module github.com/matthewjameswatkins1978-cyber/reusery.dev
 go 1.27.1
 
 require (
+	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0

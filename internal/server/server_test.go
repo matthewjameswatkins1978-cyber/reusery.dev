@@ -2,95 +2,75 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// get performs a GET request against h and decodes the JSON status body.
-func get(t *testing.T, h http.Handler, path string) (int, map[string]string) {
-	t.Helper()
-
-	req := httptest.NewRequest(http.MethodGet, path, nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	res := rec.Result()
-	defer func() {
-		if err := res.Body.Close(); err != nil {
-			t.Errorf("close response body: %v", err)
-		}
-	}()
-
-	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want %q", ct, "application/json")
-	}
-
-	var body map[string]string
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response body: %v", err)
-	}
-	return res.StatusCode, body
-}
-
-func TestHealthEndpoint(t *testing.T) {
-	s := New(":0", testLogger())
-
-	code, body := get(t, s.Handler(), "/health")
-
-	if code != http.StatusOK {
-		t.Errorf("status = %d, want %d", code, http.StatusOK)
-	}
-	if body["status"] != "ok" {
-		t.Errorf("body status = %q, want %q", body["status"], "ok")
-	}
-}
-
-func TestReadyEndpointWithoutCheckers(t *testing.T) {
-	s := New(":0", testLogger())
-
-	code, body := get(t, s.Handler(), "/ready")
-
-	if code != http.StatusOK {
-		t.Errorf("status = %d, want %d", code, http.StatusOK)
-	}
-	if body["status"] != "ok" {
-		t.Errorf("body status = %q, want %q", body["status"], "ok")
-	}
-}
-
-func TestReadyEndpointWithPassingChecker(t *testing.T) {
-	s := New(":0", testLogger(), func(_ context.Context) error { return nil })
-
-	code, body := get(t, s.Handler(), "/ready")
-
-	if code != http.StatusOK {
-		t.Errorf("status = %d, want %d", code, http.StatusOK)
-	}
-	if body["status"] != "ok" {
-		t.Errorf("body status = %q, want %q", body["status"], "ok")
-	}
-}
-
-func TestReadyEndpointWithFailingChecker(t *testing.T) {
-	s := New(":0", testLogger(), func(_ context.Context) error {
-		return errors.New("database unreachable")
+func TestNewServesProvidedHandler(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
 	})
 
-	code, body := get(t, s.Handler(), "/ready")
+	s := New(":0", testLogger(), mux)
 
-	if code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d", code, http.StatusServiceUnavailable)
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNoContent)
 	}
-	if body["status"] != "not ready" {
-		t.Errorf("body status = %q, want %q", body["status"], "not ready")
+}
+
+func TestTimeouts(t *testing.T) {
+	if ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 5s", ReadHeaderTimeout)
+	}
+	if ReadTimeout != 10*time.Second {
+		t.Errorf("ReadTimeout = %v, want 10s", ReadTimeout)
+	}
+	if IdleTimeout != 60*time.Second {
+		t.Errorf("IdleTimeout = %v, want 60s", IdleTimeout)
+	}
+	if WriteTimeout < 65*time.Second {
+		t.Errorf("WriteTimeout = %v, want at least 65s so the server never kills a bounded operation first", WriteTimeout)
+	}
+}
+
+// TestBaseContextPropagatesCancellation proves the serve context becomes the
+// parent of every request context. That is the mechanism which carries
+// shutdown into PostgreSQL, OpenAI, GitHub, pkg.go.dev and deps.dev.
+func TestBaseContextPropagatesCancellation(t *testing.T) {
+	mux := http.NewServeMux()
+	s := New(":0", testLogger(), mux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.httpServer.BaseContext = func(net.Listener) context.Context { return ctx }
+
+	base := s.httpServer.BaseContext(nil)
+	if base != ctx {
+		t.Fatal("BaseContext does not return the serve context")
+	}
+
+	derived, stop := context.WithCancel(base)
+	defer stop()
+
+	cancel()
+
+	select {
+	case <-derived.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelling the serve context did not cancel a derived request context")
 	}
 }

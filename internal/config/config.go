@@ -24,6 +24,10 @@ const (
 	EnvGitHubToken  = "REUSERY_GITHUB_TOKEN"
 	EnvOpenAIAPIKey = "REUSERY_OPENAI_API_KEY"
 	EnvOpenAIModel  = "REUSERY_OPENAI_MODEL"
+	// EnvAPIEnableExternalOperations gates the HTTP operations that spend
+	// model tokens or external provider quota. It affects the HTTP API only:
+	// the equivalent CLI commands keep working regardless of its value.
+	EnvAPIEnableExternalOperations = "REUSERY_API_ENABLE_EXTERNAL_OPERATIONS"
 )
 
 // DefaultOpenAIModel is the default model for intent normalisation.
@@ -62,6 +66,32 @@ type Config struct {
 	// without it. Readiness never depends on it, it is never logged and it is
 	// never included in a configuration error.
 	GitHubToken string
+	// APIEnableExternalOperations allows the HTTP API to run operations that
+	// spend model tokens or external provider quota: POST /v1/normalize,
+	// POST /v1/discover and POST /v1/enrich. It defaults to false so a freshly
+	// started server never exposes an unauthenticated paid-model endpoint.
+	// Offline HTTP operations (resolve, refine, inspection, health, ready) are
+	// unaffected, and so are the equivalent CLI commands.
+	APIEnableExternalOperations bool
+}
+
+// ParseStrictBool parses an on/off environment value.
+//
+// Only "true" and "false" are accepted, case-insensitively. An empty value
+// means the variable is unset and falls back to fallback. Anything else is a
+// configuration error rather than a silent default: a typo in a switch that
+// guards paid operations must fail loudly.
+func ParseStrictBool(raw string, fallback bool) (bool, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch value {
+	case "":
+		return fallback, nil
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("config: strict boolean must be \"true\" or \"false\", got %q", raw)
 }
 
 // Load reads configuration from the environment, falling back to defaults.
@@ -75,11 +105,16 @@ func Load() (Config, error) {
 	if err := validateDatabaseURL(databaseURL); err != nil {
 		return Config{}, err
 	}
+	enableExternal, err := ParseStrictBool(os.Getenv(EnvAPIEnableExternalOperations), false)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: %s: %w", EnvAPIEnableExternalOperations, err)
+	}
 	return Config{
-		HTTPAddr:    envOr(EnvHTTPAddr, DefaultHTTPAddr),
-		LogLevel:    ParseLogLevel(os.Getenv(EnvLogLevel)),
-		DatabaseURL: databaseURL,
-		GitHubToken: strings.TrimSpace(os.Getenv(EnvGitHubToken)),
+		HTTPAddr:                    envOr(EnvHTTPAddr, DefaultHTTPAddr),
+		LogLevel:                    ParseLogLevel(os.Getenv(EnvLogLevel)),
+		DatabaseURL:                 databaseURL,
+		GitHubToken:                 strings.TrimSpace(os.Getenv(EnvGitHubToken)),
+		APIEnableExternalOperations: enableExternal,
 	}, nil
 }
 

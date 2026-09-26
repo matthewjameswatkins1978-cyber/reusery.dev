@@ -12,7 +12,14 @@ import (
 func TestGracefulShutdown(t *testing.T) {
 	const addr = "127.0.0.1:18081"
 
-	s := New(addr, testLogger())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+			t.Errorf("write health response: %v", err)
+		}
+	})
+	s := New(addr, testLogger(), mux)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

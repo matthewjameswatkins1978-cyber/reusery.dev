@@ -135,3 +135,58 @@ func (q *Queries) ListEvidenceBySubject(ctx context.Context, subjectID string) (
 	}
 	return items, nil
 }
+
+const listEvidencePage = `-- name: ListEvidencePage :many
+SELECT id, subject_id, kind, claim, result, source_url, source_revision, source_path, source_license, observed_at, applies_to, methodology, artifact
+FROM evidence
+WHERE subject_id = $1
+  AND (observed_at, id) > ($2::timestamptz, $3::text)
+ORDER BY observed_at, id
+LIMIT $4::int
+`
+
+type ListEvidencePageParams struct {
+	SubjectID       string
+	AfterObservedAt pgtype.Timestamptz
+	AfterID         string
+	PageLimit       int32
+}
+
+func (q *Queries) ListEvidencePage(ctx context.Context, arg ListEvidencePageParams) ([]Evidence, error) {
+	rows, err := q.db.Query(ctx, listEvidencePage,
+		arg.SubjectID,
+		arg.AfterObservedAt,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Evidence{}
+	for rows.Next() {
+		var i Evidence
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubjectID,
+			&i.Kind,
+			&i.Claim,
+			&i.Result,
+			&i.SourceUrl,
+			&i.SourceRevision,
+			&i.SourcePath,
+			&i.SourceLicense,
+			&i.ObservedAt,
+			&i.AppliesTo,
+			&i.Methodology,
+			&i.Artifact,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

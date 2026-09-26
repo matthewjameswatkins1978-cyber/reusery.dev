@@ -1,61 +1,70 @@
-// Package server builds the HTTP server and its routes.
+// Package server owns the generic HTTP server lifecycle: listen, timeouts,
+// cancellation and graceful shutdown.
+//
+// It knows nothing about Reusery's routes or domain. The API package owns the
+// HTTP contract and hands this package an http.Handler.
 package server
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
 
 // Timeouts applied to every HTTP server instance.
+//
+// WriteTimeout is deliberately generous: legitimate bounded API operations
+// include two 20-second model calls, three bounded discovery provider passes
+// and a 30-second enrichment run. The per-operation budgets inside the handlers
+// are always tighter, so the application deadline, never the server deadline,
+// is what terminates a slow request.
 const (
 	ReadTimeout       = 10 * time.Second
 	ReadHeaderTimeout = 5 * time.Second
-	WriteTimeout      = 10 * time.Second
+	WriteTimeout      = 65 * time.Second
 	IdleTimeout       = 60 * time.Second
 )
 
 // ShutdownTimeout bounds graceful shutdown after cancellation.
 const ShutdownTimeout = 10 * time.Second
 
-// ReadyChecker reports whether a dependency required for serving traffic is
-// ready. Packet 3 registers the PostgreSQL checker; /health never uses these.
-type ReadyChecker func(ctx context.Context) error
-
-// Server wraps http.Server with the application's routes.
+// Server wraps http.Server with the application's handler.
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
-	checkers   []ReadyChecker
 }
 
-// New builds a Server bound to addr. Pass ReadyCheckers to extend /ready.
-func New(addr string, logger *slog.Logger, checkers ...ReadyChecker) *Server {
-	s := &Server{logger: logger, checkers: checkers}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/ready", s.handleReady)
-	s.httpServer = &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadTimeout:       ReadTimeout,
-		ReadHeaderTimeout: ReadHeaderTimeout,
-		WriteTimeout:      WriteTimeout,
-		IdleTimeout:       IdleTimeout,
+// New builds a Server bound to addr serving handler.
+func New(addr string, logger *slog.Logger, handler http.Handler) *Server {
+	return &Server{
+		logger: logger,
+		httpServer: &http.Server{
+			Addr:              addr,
+			Handler:           handler,
+			ReadTimeout:       ReadTimeout,
+			ReadHeaderTimeout: ReadHeaderTimeout,
+			WriteTimeout:      WriteTimeout,
+			IdleTimeout:       IdleTimeout,
+		},
 	}
-	return s
 }
 
-// Handler exposes the route mux, primarily for tests.
+// Handler exposes the served handler, primarily for tests.
 func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
 }
 
 // Start serves until ctx is cancelled, then shuts down gracefully.
-// A server failure is returned immediately without waiting for ctx.
+//
+// The serve context is also the BaseContext of every request, so cancelling it
+// propagates to in-flight request contexts and from there to PostgreSQL,
+// OpenAI, GitHub, pkg.go.dev and deps.dev through context.Context. A server
+// failure is returned immediately without waiting for ctx.
 func (s *Server) Start(ctx context.Context) error {
+	s.httpServer.BaseContext = func(net.Listener) context.Context { return ctx }
+
 	errCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("http server listening", "addr", s.httpServer.Addr)
@@ -79,37 +88,5 @@ func (s *Server) Start(ctx context.Context) error {
 		return shutdownErr
 	case err := <-errCh:
 		return err
-	}
-}
-
-// handleHealth reports liveness. It never depends on external systems.
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	s.writeStatus(w, http.StatusOK, "ok")
-}
-
-// handleReady reports readiness. Each registered checker must pass; in
-// production the PostgreSQL readiness checker is registered here.
-func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	for _, check := range s.checkers {
-		if err := check(r.Context()); err != nil {
-			s.logger.Warn("readiness check failed", "error", err)
-			s.writeStatus(w, http.StatusServiceUnavailable, "not ready")
-			return
-		}
-	}
-	s.writeStatus(w, http.StatusOK, "ok")
-}
-
-func (s *Server) writeStatus(w http.ResponseWriter, code int, status string) {
-	body, err := json.Marshal(map[string]string{"status": status})
-	if err != nil {
-		s.logger.Error("failed to encode status response", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	if _, err := w.Write(body); err != nil {
-		s.logger.Warn("failed to write status response", "error", err)
 	}
 }

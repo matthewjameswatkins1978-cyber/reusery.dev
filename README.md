@@ -292,6 +292,69 @@ Both return `{"status":"ok"}` with HTTP 200. `/health` never touches the
 database; `/ready` reflects PostgreSQL connectivity and returns
 `{"status":"not ready"}` (HTTP 503) when it fails.
 
+## HTTP API
+
+`reusery serve` also exposes a stable, versioned HTTP/JSON API with a
+generated OpenAPI 3.1 contract. The CLI and HTTP are two clients of the same
+application services — HTTP owns no product logic. Full reference:
+[docs/http-api.md](docs/http-api.md).
+
+```bash
+# start (external HTTP operations are OFF by default)
+reusery serve
+
+# inspect the contract
+curl http://localhost:8080/openapi.json
+# browser documentation
+start http://localhost:8080/docs
+```
+
+Product operations:
+
+| Operation | Request |
+| --- | --- |
+| `POST /v1/normalize` | `{"input":"I need..."}` |
+| `POST /v1/discover` | structured Packet 5 discovery profile |
+| `POST /v1/enrich` | `{"specimen_ids":["..."]}` |
+| `POST /v1/resolve` | primitive/contract/candidates + structured policy |
+| `POST /v1/refine` | the same + base policy + complete feedback history |
+| `GET /v1/primitives?id=…` `GET /v1/contracts?id=…` `GET /v1/specimens?id=…` | opaque id query parameter |
+| `GET /v1/evidence?subject_id=…&limit=50&cursor=…` | bounded cursor pagination |
+| `GET /v1/resolutions/{id}` | persisted decision, no re-evaluation |
+
+```powershell
+# Windows PowerShell examples
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/normalize `
+  -ContentType 'application/json' -Body '{"input":"I need a Go child-process runner"}'
+
+# external operations are disabled by default
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/normalize `
+  -ContentType 'application/json' -Body '{"input":"..."}'
+# -> 503 {"code":"external_operations_disabled"}
+
+# opt in for the HTTP model/discovery/enrichment routes only
+$env:REUSERY_API_ENABLE_EXTERNAL_OPERATIONS = 'true'
+reusery serve
+```
+
+Key semantics, all documented in the contract:
+
+- the four stages stay explicit — there is no hidden normalize→discover→
+  enrich→resolve chain
+- `resolved` and `needs_verification` are both HTTP 200; `needs_verification`
+  returns null `resolution_id`/`resolution` and persists nothing
+- REFERENCE keeps its honest meaning and never claims contract satisfaction
+- the policy is supplied as structured JSON, never as a filesystem path
+- external HTTP operations are **off by default**; the CLI is unaffected
+- there is no authentication yet and this is **not** production
+  internet-ready
+
+```bash
+# regenerate / verify the checked-in contract
+go run ./cmd/openapi -write openapi/reusery-v1.json
+go run ./cmd/openapi -check  openapi/reusery-v1.json
+```
+
 ## Architecture
 
 ```text
@@ -302,7 +365,13 @@ scripts    developer automation
 ```
 
 - `internal/config` — environment-based configuration.
-- `internal/server` — HTTP server construction, routes and lifecycle.
+- `internal/api` — the stable HTTP/JSON API v1: transport DTOs, mapping,
+  RFC 9457 errors, middleware and route registration (see
+  [docs/http-api.md](docs/http-api.md)).
+- `internal/app` — shared composition root: the production factories the CLI
+  and the HTTP API both call.
+- `internal/server` — generic HTTP server lifecycle: timeouts, cancellation
+  propagation and graceful shutdown. It owns no routes.
 - `internal/version` — build metadata (linker-flag injectable).
 - `internal/model` — core domain model (Primitive, Contract, Specimen, Evidence, Resolution).
 - `internal/resolver` — deterministic evidence evaluation, the resolution
@@ -342,6 +411,7 @@ Source-shaped project assets live outside Go:
 - `discovery/` — public discovery profiles.
 - `policies/` — authored policy profiles.
 - `examples/` — example resolve, enrich, choose and intent requests.
+- `openapi/` — the checked-in, generated OpenAPI v1 contract.
 - `evals/` — deterministic evaluation corpora.
 - `benchmarks/` — benchmark record format and (eventually) paired runs.
 

@@ -18,16 +18,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/api"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/app"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/catalog"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/config"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery"
-	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/github"
-	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/discovery/providers/pkggodev"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment"
-	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment/providers/depsdev"
-	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/enrichment/providers/githubmeta"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent"
-	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/intent/providers/openai"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/policy"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/resolver"
@@ -43,29 +40,15 @@ const (
 	ExitUsage = 2
 )
 
-// Store is the combined persistence surface the CLI needs.
-type Store interface {
-	resolver.Repository
-	catalog.Store
-}
-
-// Discoverer runs bounded public discovery for one profile. Tests inject a
-// fake so CLI unit tests never touch the network.
-type Discoverer interface {
-	Discover(context.Context, discovery.Profile) (discovery.Result, error)
-}
-
-// Normalizer turns raw engineering intent into a structured result. Tests
-// inject a fake so CLI unit tests never make a paid model call.
-type Normalizer interface {
-	Normalize(context.Context, string) (intent.Result, error)
-}
-
-// Enricher runs bounded metadata enrichment for named specimens. Tests inject
-// a fake so CLI unit tests never touch the network.
-type Enricher interface {
-	Enrich(context.Context, []string) (enrichment.Result, error)
-}
+// Store, Discoverer, Normalizer and Enricher are the application seams the
+// commands call. They are aliases of the shared composition root so the CLI
+// and the HTTP API run exactly the same services.
+type (
+	Store      = app.Store
+	Discoverer = app.Discoverer
+	Normalizer = app.Normalizer
+	Enricher   = app.Enricher
+)
 
 // App is the command-line application. Production wiring lives in New; tests
 // construct an App directly and inject fakes.
@@ -119,47 +102,12 @@ func New() *App {
 		LoadCorpus:      intent.LoadCorpus,
 		LoadPolicy:      policy.Load,
 		LoadFeedback:    policy.LoadFeedback,
-		NewDiscoverer:   newPublicDiscoverer,
-		NewEnricher:     newPublicEnricher,
-		NewNormalizer:   newOpenAINormalizer,
+		NewDiscoverer:   app.NewDiscoverer,
+		NewEnricher:     app.NewEnricher,
+		NewNormalizer:   app.NewNormalizer,
 		Serve:           serveHTTP,
 		Clock:           time.Now,
 	}
-}
-
-// newOpenAINormalizer wires the single Packet 6 model adapter. The API key is
-// required only here: serve, seed, discover, resolve and resolution never
-// construct a normaliser.
-func newOpenAINormalizer(cfg config.ModelConfig) (Normalizer, error) {
-	key, err := cfg.RequireAPIKey()
-	if err != nil {
-		return nil, err
-	}
-	provider, err := openai.New(key, cfg.Model())
-	if err != nil {
-		return nil, err
-	}
-	return intent.NewNormalizer(provider), nil
-}
-
-// newPublicDiscoverer wires the real Packet 5 providers. The GitHub token is
-// optional: without it GitHub's public unauthenticated limits apply.
-func newPublicDiscoverer(store Store, cfg config.Config, clock discovery.Clock) Discoverer {
-	client := github.NewClient(cfg.GitHubToken)
-	return discovery.NewService(store, clock, []discovery.Provider{
-		pkggodev.New(),
-		github.NewRepositoryProvider(client),
-		github.NewCodeProvider(client),
-	})
-}
-
-// newPublicEnricher wires the real Packet 7 enrichment providers over the same
-// optional GitHub token. Enrichment is the only command that constructs one.
-func newPublicEnricher(store Store, cfg config.Config, clock enrichment.Clock) Enricher {
-	return enrichment.NewService(store, clock, []enrichment.Provider{
-		depsdev.New(),
-		githubmeta.New(cfg.GitHubToken),
-	})
 }
 
 // Run executes one command and returns the process exit code.
@@ -1213,6 +1161,8 @@ func (a *App) usage(w io.Writer) {
 
 	Usage:
   reusery serve                                      start the HTTP server (default)
+                                                     serves /v1 and /openapi.json
+                                                     (see docs/http-api.md)
   reusery seed --root DIR --manifest FILE            load a catalogue seed bundle
   reusery resolve --request FILE [--format text|json]  run a resolve request
   reusery resolution --id N [--format text|json]     inspect a stored resolution
@@ -1320,6 +1270,27 @@ func serveHTTP(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	defer pool.Close()
 	logger.Info("postgres connected")
 
-	srv := server.New(cfg.HTTPAddr, logger, postgres.ReadyChecker(pool))
+	store := postgres.NewStore(pool)
+
+	// The model provider is only ever constructed inside a request, so the
+	// server starts cleanly with no REUSERY_OPENAI_API_KEY configured.
+	handler := api.NewHandler(api.Dependencies{
+		NormalizerFactory: func() (app.Normalizer, error) {
+			modelConfig, loadErr := config.LoadModel()
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return app.NewNormalizer(modelConfig)
+		},
+		Discoverer:                app.NewDiscoverer(store, cfg, time.Now),
+		Enricher:                  app.NewEnricher(store, cfg, time.Now),
+		Resolver:                  app.NewQualityResolver(store, time.Now),
+		Inspector:                 store,
+		ReadyCheckers:             []app.ReadyChecker{postgres.ReadyChecker(pool)},
+		Logger:                    logger,
+		ExternalOperationsEnabled: cfg.APIEnableExternalOperations,
+	})
+
+	srv := server.New(cfg.HTTPAddr, logger, handler)
 	return srv.Start(ctx)
 }

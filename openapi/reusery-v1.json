@@ -1,0 +1,3412 @@
+{
+  "components": {
+    "schemas": {
+      "AdvisoryFact": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "Reported advisory count.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "count_known": {
+            "description": "Whether a count was actually reported.",
+            "type": "boolean"
+          },
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "known_ids": {
+            "description": "Known advisory identifiers; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "known_ids",
+          "count",
+          "count_known",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "AppliedFeedback": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "description": "Candidate the feedback targeted.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Feedback reason.",
+            "enum": [
+              "not_quite",
+              "too_many_dependencies",
+              "licence_not_allowed",
+              "avoid_dependency",
+              "avoid_reference",
+              "archived_project"
+            ],
+            "type": "string"
+          },
+          "refinement": {
+            "description": "What the feedback changed, when it changed a rule.",
+            "type": "string"
+          },
+          "warning": {
+            "description": "Non-fatal caveat, when one applies.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "reason",
+          "refinement",
+          "warning"
+        ],
+        "type": "object"
+      },
+      "ArchivedFact": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "description": "Whether the repository is archived.",
+            "type": "boolean"
+          },
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "known": {
+            "description": "Whether the archive state was observed.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "archived",
+          "known",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "BehaviourEvaluation": {
+        "additionalProperties": false,
+        "properties": {
+          "requirements": {
+            "description": "Per-requirement verdicts; never null.",
+            "items": {
+              "$ref": "#/components/schemas/RequirementEvaluation"
+            },
+            "type": "array"
+          },
+          "specimen_id": {
+            "description": "Specimen evaluated.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "specimen_id",
+          "requirements"
+        ],
+        "type": "object"
+      },
+      "CandidateAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "behaviour": {
+            "$ref": "#/components/schemas/BehaviourEvaluation",
+            "description": "Behavioural evidence picture."
+          },
+          "cons": {
+            "description": "Weakening considerations; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Tradeoff"
+            },
+            "type": "array"
+          },
+          "disposition": {
+            "description": "Why this candidate can or cannot be used.",
+            "enum": [
+              "implementation_eligible",
+              "reference_only",
+              "needs_verification",
+              "needs_review",
+              "blocked"
+            ],
+            "type": "string"
+          },
+          "evidence_ids": {
+            "description": "All evidence consulted; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "facts": {
+            "$ref": "#/components/schemas/Facts",
+            "description": "Machine-readable facts extracted from evidence."
+          },
+          "policy": {
+            "description": "Per-dimension policy verdicts; never null.",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDecision"
+            },
+            "type": "array"
+          },
+          "pros": {
+            "description": "Supporting considerations; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Tradeoff"
+            },
+            "type": "array"
+          },
+          "reuse_mode": {
+            "description": "Reuse mode considered.",
+            "enum": [
+              "copy",
+              "dependency",
+              "adapt",
+              "reference"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRef",
+            "description": "Attributable source."
+          },
+          "specimen_id": {
+            "description": "Candidate assessed.",
+            "type": "string"
+          },
+          "unknowns": {
+            "description": "Preserved unknowns; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Tradeoff"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "specimen_id",
+          "reuse_mode",
+          "source",
+          "behaviour",
+          "facts",
+          "policy",
+          "disposition",
+          "pros",
+          "cons",
+          "unknowns",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "CandidateRef": {
+        "additionalProperties": false,
+        "properties": {
+          "reuse_mode": {
+            "description": "Reuse mode under consideration.",
+            "enum": [
+              "copy",
+              "dependency",
+              "adapt",
+              "reference"
+            ],
+            "type": "string"
+          },
+          "specimen_id": {
+            "description": "Opaque Reusery specimen id.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "specimen_id",
+          "reuse_mode"
+        ],
+        "type": "object"
+      },
+      "Contract": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Opaque Reusery contract id.",
+            "type": "string"
+          },
+          "primitive_id": {
+            "description": "The owning primitive id.",
+            "type": "string"
+          },
+          "requirements": {
+            "description": "Ordered requirements; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Requirement"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "description": "One-paragraph summary.",
+            "type": "string"
+          },
+          "version": {
+            "description": "Contract version.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "primitive_id",
+          "version",
+          "summary",
+          "requirements"
+        ],
+        "type": "object"
+      },
+      "DecisionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "applied_feedback": {
+            "description": "Feedback actually applied; never null.",
+            "items": {
+              "$ref": "#/components/schemas/AppliedFeedback"
+            },
+            "type": "array"
+          },
+          "assessments": {
+            "description": "Every candidate assessed; never null.",
+            "items": {
+              "$ref": "#/components/schemas/CandidateAssessment"
+            },
+            "type": "array"
+          },
+          "effective_policy": {
+            "$ref": "#/components/schemas/EffectivePolicy",
+            "description": "Policy actually applied, after refinement."
+          },
+          "policy_id": {
+            "description": "Policy profile identifier.",
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Resolution"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Persisted resolution, or null when nothing was persisted."
+          },
+          "resolution_id": {
+            "description": "Persisted resolution identity, or null when nothing was persisted.",
+            "examples": [
+              12
+            ],
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "selected": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateAssessment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Selected candidate assessment, or null."
+          },
+          "shortlist": {
+            "description": "Ranked shortlist; never null.",
+            "items": {
+              "$ref": "#/components/schemas/CandidateAssessment"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "Decision status.",
+            "enum": [
+              "resolved",
+              "needs_verification"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "policy_id",
+          "resolution_id",
+          "resolution",
+          "selected",
+          "shortlist",
+          "assessments",
+          "effective_policy",
+          "applied_feedback"
+        ],
+        "type": "object"
+      },
+      "DependencyFact": {
+        "additionalProperties": false,
+        "properties": {
+          "direct": {
+            "description": "Direct dependencies observed; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "direct_count": {
+            "description": "Conservative direct dependency count.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "direct_count_known": {
+            "description": "Whether the direct count is established.",
+            "type": "boolean"
+          },
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "indirect": {
+            "description": "Indirect dependencies observed; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "indirect_count": {
+            "description": "Conservative indirect dependency count.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "indirect_count_known": {
+            "description": "Whether the indirect count is established.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "direct",
+          "indirect",
+          "direct_count",
+          "direct_count_known",
+          "indirect_count",
+          "indirect_count_known",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "DeprecatedFact": {
+        "additionalProperties": false,
+        "properties": {
+          "deprecated": {
+            "description": "Whether the package is deprecated.",
+            "type": "boolean"
+          },
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "known": {
+            "description": "Whether deprecation state was observed.",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Deprecation reason when one was reported.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "deprecated",
+          "reason",
+          "known",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "DiscoveryCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "description": "Discovery observations; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array"
+          },
+          "provider_id": {
+            "description": "Provider that found it.",
+            "type": "string"
+          },
+          "specimen": {
+            "$ref": "#/components/schemas/Specimen",
+            "description": "The discovered specimen."
+          }
+        },
+        "required": [
+          "provider_id",
+          "specimen",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "DiscoveryIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Issue kind.",
+            "type": "string"
+          },
+          "message": {
+            "description": "Safe human-readable explanation.",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Provider that raised it.",
+            "type": "string"
+          },
+          "query": {
+            "description": "Query involved, when applicable.",
+            "type": "string"
+          },
+          "retry_after": {
+            "description": "Upstream Retry-After value, when one exists.",
+            "type": "string"
+          },
+          "status_code": {
+            "description": "Upstream status code, when one exists.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "provider",
+          "query",
+          "status_code",
+          "retry_after",
+          "message"
+        ],
+        "type": "object"
+      },
+      "DiscoveryProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_id": {
+            "description": "Contract being discovered for.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "primitive_id": {
+            "description": "Primitive being discovered for.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "providers": {
+            "description": "Bounded provider plans; never null.",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryProviderPlan"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "description": "Discovery profile schema version; must be 1.",
+            "examples": [
+              1
+            ],
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "primitive_id",
+          "contract_id",
+          "providers"
+        ],
+        "type": "object"
+      },
+      "DiscoveryProviderPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Provider id.",
+            "enum": [
+              "pkg.go.dev",
+              "github-repositories",
+              "github-code"
+            ],
+            "type": "string"
+          },
+          "queries": {
+            "description": "Queries for this provider; never null.",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryQuery"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "queries"
+        ],
+        "type": "object"
+      },
+      "DiscoveryProviderReport": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "description": "Candidates returned.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Provider id.",
+            "type": "string"
+          },
+          "incomplete": {
+            "description": "Whether results were truncated.",
+            "type": "boolean"
+          },
+          "issues": {
+            "description": "Issues raised; never null.",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryIssue"
+            },
+            "type": "array"
+          },
+          "requests": {
+            "description": "HTTP requests made.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "succeeded": {
+            "description": "Whether the provider completed without operational failure.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "succeeded",
+          "requests",
+          "candidate_count",
+          "incomplete",
+          "issues"
+        ],
+        "type": "object"
+      },
+      "DiscoveryQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "Maximum results requested from this query.",
+            "examples": [
+              5
+            ],
+            "format": "int64",
+            "maximum": 6,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "text": {
+            "description": "Search text.",
+            "examples": [
+              "subprocess runner cancellation"
+            ],
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "DiscoveryRelevanceFact": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "matched": {
+            "description": "Whether discovery surfaced the candidate.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "matched",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "DiscoveryResult": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "description": "Discovered candidates; never null.",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryCandidate"
+            },
+            "type": "array"
+          },
+          "contract_id": {
+            "description": "Contract discovered for.",
+            "type": "string"
+          },
+          "observed_at": {
+            "description": "Observation time for this run.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "primitive_id": {
+            "description": "Primitive discovered for.",
+            "type": "string"
+          },
+          "providers": {
+            "description": "Per-provider reports, including partial failures; never null.",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryProviderReport"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "primitive_id",
+          "contract_id",
+          "observed_at",
+          "candidates",
+          "providers"
+        ],
+        "type": "object"
+      },
+      "EffectivePolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_reuse_modes": {
+            "description": "Reuse modes permitted after refinement; never null.",
+            "items": {
+              "enum": [
+                "copy",
+                "dependency",
+                "adapt",
+                "reference"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "archived_action": {
+            "description": "Archived action after refinement.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "description": "Policy profile identifier.",
+            "type": "string"
+          },
+          "licence_allow": {
+            "description": "Licence allow list after refinement; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "licence_deny": {
+            "description": "Licence deny list after refinement; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_days_since_push": {
+            "description": "Staleness window after refinement, or null.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_days_since_release": {
+            "description": "Release age window after refinement, or null.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_direct": {
+            "description": "Direct dependency ceiling after refinement, or null.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_options": {
+            "description": "Shortlist bound after refinement.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "preferred_reuse_modes": {
+            "description": "Preference order after refinement; never null.",
+            "items": {
+              "enum": [
+                "copy",
+                "dependency",
+                "adapt",
+                "reference"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "schema_version": {
+            "description": "Policy schema version.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schema_version",
+          "allowed_reuse_modes",
+          "preferred_reuse_modes",
+          "licence_deny",
+          "licence_allow",
+          "max_direct",
+          "archived_action",
+          "max_days_since_push",
+          "max_days_since_release",
+          "max_options"
+        ],
+        "type": "object"
+      },
+      "EnrichIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Issue kind.",
+            "type": "string"
+          },
+          "message": {
+            "description": "Safe human-readable explanation.",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Provider that raised it.",
+            "type": "string"
+          },
+          "retry_after": {
+            "description": "Upstream Retry-After value, when one exists.",
+            "type": "string"
+          },
+          "specimen_id": {
+            "description": "Specimen involved, when applicable.",
+            "type": "string"
+          },
+          "status_code": {
+            "description": "Upstream status code, when one exists.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "provider",
+          "specimen_id",
+          "status_code",
+          "retry_after",
+          "message"
+        ],
+        "type": "object"
+      },
+      "EnrichProviderReport": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_count": {
+            "description": "Observations recorded.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Provider id.",
+            "type": "string"
+          },
+          "issues": {
+            "description": "Issues raised; never null.",
+            "items": {
+              "$ref": "#/components/schemas/EnrichIssue"
+            },
+            "type": "array"
+          },
+          "requests": {
+            "description": "HTTP requests made.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "succeeded": {
+            "description": "Whether the provider completed without operational failure.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "succeeded",
+          "requests",
+          "evidence_count",
+          "issues"
+        ],
+        "type": "object"
+      },
+      "EnrichRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "specimen_ids": {
+            "description": "Specimens to enrich; must be non-empty, unique and within the run budget.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "specimen_ids"
+        ],
+        "type": "object"
+      },
+      "EnrichResult": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "description": "New observations; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array"
+          },
+          "observed_at": {
+            "description": "Observation time for this run.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "specimens": {
+            "description": "Per-specimen reports; never null.",
+            "items": {
+              "$ref": "#/components/schemas/SpecimenEnrichReport"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "observed_at",
+          "evidence",
+          "specimens"
+        ],
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "location": {
+            "description": "Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'",
+            "type": "string"
+          },
+          "message": {
+            "description": "Error message text",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value at the given location"
+          }
+        },
+        "type": "object"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "properties": {
+          "applies_to": {
+            "description": "Requirement id this observation applies to; empty for non-behavioural evidence.",
+            "type": "string"
+          },
+          "artifact": {
+            "description": "Machine-readable artifact backing the claim.",
+            "type": "string"
+          },
+          "claim": {
+            "description": "The observed claim.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Opaque evidence id.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Observation kind.",
+            "type": "string"
+          },
+          "methodology": {
+            "description": "How the observation was obtained.",
+            "type": "string"
+          },
+          "observed_at": {
+            "description": "When the observation was recorded.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "result": {
+            "description": "Observation result. Discovery and enrichment only ever emit info or unknown.",
+            "enum": [
+              "pass",
+              "fail",
+              "unknown",
+              "info"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRef",
+            "description": "Attributable source."
+          },
+          "subject_id": {
+            "description": "The specimen this observation is about.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "subject_id",
+          "kind",
+          "claim",
+          "result",
+          "source",
+          "observed_at",
+          "applies_to",
+          "methodology",
+          "artifact"
+        ],
+        "type": "object"
+      },
+      "EvidencePage": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "description": "Observations ordered by observed_at then id; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "Page size used.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "description": "Opaque cursor for the next page, or null when the page is the last one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject_id": {
+            "description": "Subject the page belongs to.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "evidence",
+          "limit",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "Facts": {
+        "additionalProperties": false,
+        "properties": {
+          "advisory": {
+            "$ref": "#/components/schemas/AdvisoryFact",
+            "description": "Advisory picture."
+          },
+          "archived": {
+            "$ref": "#/components/schemas/ArchivedFact",
+            "description": "Archived picture."
+          },
+          "dependency": {
+            "$ref": "#/components/schemas/DependencyFact",
+            "description": "Dependency picture."
+          },
+          "deprecated": {
+            "$ref": "#/components/schemas/DeprecatedFact",
+            "description": "Deprecation picture."
+          },
+          "discovery_relevance": {
+            "$ref": "#/components/schemas/DiscoveryRelevanceFact",
+            "description": "Discovery relevance picture."
+          },
+          "last_push": {
+            "$ref": "#/components/schemas/LastPushFact",
+            "description": "Last push picture."
+          },
+          "licence": {
+            "$ref": "#/components/schemas/LicenceFact",
+            "description": "Licence picture."
+          },
+          "published_at": {
+            "$ref": "#/components/schemas/PublishedAtFact",
+            "description": "Publication picture."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/RevisionFact",
+            "description": "Revision picture."
+          }
+        },
+        "required": [
+          "licence",
+          "advisory",
+          "dependency",
+          "archived",
+          "last_push",
+          "deprecated",
+          "revision",
+          "published_at",
+          "discovery_relevance"
+        ],
+        "type": "object"
+      },
+      "Feedback": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "description": "Candidate the feedback applies to.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "description": "Structured feedback reason.",
+            "enum": [
+              "not_quite",
+              "too_many_dependencies",
+              "licence_not_allowed",
+              "avoid_dependency",
+              "avoid_reference",
+              "archived_project"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "IntentAmbiguity": {
+        "additionalProperties": false,
+        "properties": {
+          "question": {
+            "description": "The clarifying question.",
+            "type": "string"
+          },
+          "why_it_matters": {
+            "description": "How the answer changes the required behaviour.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "why_it_matters"
+        ],
+        "type": "object"
+      },
+      "IntentConstraint": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "The constraint.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Constraint kind.",
+            "examples": [
+              "language"
+            ],
+            "type": "string"
+          },
+          "required": {
+            "description": "Whether the constraint is mandatory.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "description",
+          "required"
+        ],
+        "type": "object"
+      },
+      "IntentGenerationMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "description": "Model calls used, including any repair.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "model": {
+            "description": "Model identifier.",
+            "type": "string"
+          },
+          "prompt_version": {
+            "description": "Prompt version.",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Model provider id.",
+            "type": "string"
+          },
+          "repaired": {
+            "description": "Whether a repair pass ran.",
+            "type": "boolean"
+          },
+          "response_id": {
+            "description": "Provider response identifier.",
+            "type": "string"
+          },
+          "schema_version": {
+            "description": "Normalisation schema version.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/IntentUsage",
+            "description": "Token usage."
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "response_id",
+          "prompt_version",
+          "schema_version",
+          "calls",
+          "repaired",
+          "usage"
+        ],
+        "type": "object"
+      },
+      "IntentResult": {
+        "additionalProperties": false,
+        "properties": {
+          "ambiguities": {
+            "description": "Material ambiguities; never null.",
+            "items": {
+              "$ref": "#/components/schemas/IntentAmbiguity"
+            },
+            "type": "array"
+          },
+          "assumptions": {
+            "description": "Assumptions made; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "capability": {
+            "description": "Structured capability statement.",
+            "type": "string"
+          },
+          "constraints": {
+            "description": "Constraints; never null.",
+            "items": {
+              "$ref": "#/components/schemas/IntentConstraint"
+            },
+            "type": "array"
+          },
+          "contract": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Contract"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Provisional contract, or null."
+          },
+          "input": {
+            "description": "Echo of the original input.",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/IntentGenerationMetadata",
+            "description": "How this result was produced."
+          },
+          "primitive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Primitive"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Provisional primitive, or null."
+          },
+          "requested_artifact_level": {
+            "description": "Requested artifact level.",
+            "enum": [
+              "unspecified",
+              "code",
+              "package",
+              "library",
+              "framework",
+              "cross_level"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "description": "Normalisation status.",
+            "enum": [
+              "ready",
+              "needs_clarification",
+              "unsupported"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "description": "Plain-language summary.",
+            "type": "string"
+          },
+          "unsupported_reason": {
+            "description": "Why the input was unsupported, when status is unsupported.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input",
+          "status",
+          "requested_artifact_level",
+          "capability",
+          "summary",
+          "primitive",
+          "contract",
+          "constraints",
+          "ambiguities",
+          "assumptions",
+          "unsupported_reason",
+          "metadata"
+        ],
+        "type": "object"
+      },
+      "IntentUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "input_tokens": {
+            "description": "Prompt tokens consumed.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "description": "Completion tokens consumed.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "reasoning_tokens": {
+            "description": "Reasoning tokens consumed.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "description": "Total tokens consumed.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "reasoning_tokens",
+          "total_tokens"
+        ],
+        "type": "object"
+      },
+      "LastPushFact": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "known": {
+            "description": "Whether a last push was observed.",
+            "type": "boolean"
+          },
+          "pushed_at": {
+            "description": "Observed last push, or null when unknown.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "pushed_at",
+          "known",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "LicenceFact": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "relationship_unknown": {
+            "description": "True when several expressions were observed and their relationship is not established.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          },
+          "values": {
+            "description": "Exact licence expressions observed; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "values",
+          "relationship_unknown",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "NormalizeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "description": "Ordinary engineering intent in natural language.",
+            "examples": [
+              "I need a Go component that runs child processes with timeouts"
+            ],
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "type": "object"
+      },
+      "Policy": {
+        "additionalProperties": false,
+        "properties": {
+          "dependencies": {
+            "$ref": "#/components/schemas/PolicyDeps",
+            "description": "Dependency burden rules."
+          },
+          "id": {
+            "description": "Policy profile identifier recorded on the resolution.",
+            "examples": [
+              "public-go-baseline/v1"
+            ],
+            "minLength": 1,
+            "type": "string"
+          },
+          "license": {
+            "$ref": "#/components/schemas/PolicyLicence",
+            "description": "Licence rules."
+          },
+          "maintenance": {
+            "$ref": "#/components/schemas/PolicyMaint",
+            "description": "Maintenance rules."
+          },
+          "reuse": {
+            "$ref": "#/components/schemas/PolicyReuse",
+            "description": "Reuse mode rules."
+          },
+          "schema_version": {
+            "const": 1,
+            "description": "Policy schema version; must be 1.",
+            "examples": [
+              1
+            ],
+            "format": "int64",
+            "type": "integer"
+          },
+          "security": {
+            "$ref": "#/components/schemas/PolicySecurity",
+            "description": "Advisory rules."
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PolicySelection",
+            "description": "Selection bounds."
+          },
+          "source": {
+            "$ref": "#/components/schemas/PolicySource",
+            "description": "Provenance rules."
+          }
+        },
+        "required": [
+          "schema_version",
+          "id",
+          "reuse",
+          "license",
+          "security",
+          "dependencies",
+          "maintenance",
+          "source",
+          "selection"
+        ],
+        "type": "object"
+      },
+      "PolicyDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "Verdict.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "dimension": {
+            "description": "Evaluated dimension.",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "description": "Evidence backing the verdict; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "description": "Deterministic explanation.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dimension",
+          "action",
+          "reason",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "PolicyDeps": {
+        "additionalProperties": false,
+        "properties": {
+          "max_direct": {
+            "description": "Maximum permitted direct dependencies. Omit or send null for no quantity rule.",
+            "examples": [
+              7
+            ],
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "unknown": {
+            "description": "Action when the dependency count is unknown.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "unknown"
+        ],
+        "type": "object"
+      },
+      "PolicyLicence": {
+        "additionalProperties": false,
+        "properties": {
+          "allow": {
+            "description": "Exact licence expressions that are allowed; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "deny": {
+            "description": "Exact licence expressions that are denied; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "multiple": {
+            "description": "Action when several licence expressions are observed.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "unknown": {
+            "description": "Action when no licence is established.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "unlisted": {
+            "description": "Action when the licence is known but not listed.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "allow",
+          "deny",
+          "unknown",
+          "multiple",
+          "unlisted"
+        ],
+        "type": "object"
+      },
+      "PolicyMaint": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "description": "Action when the source repository is archived.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "deprecated": {
+            "description": "Action when the package is deprecated.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "max_days_since_push": {
+            "description": "Staleness window in days. Omit or send null to disable the rule.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_days_since_release": {
+            "description": "Release age window in days. Omit or send null to disable the rule.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stale": {
+            "description": "Action when the last push exceeds the configured window.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "unknown": {
+            "description": "Action when a configured maintenance fact is unknown.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "archived",
+          "deprecated",
+          "stale",
+          "unknown"
+        ],
+        "type": "object"
+      },
+      "PolicyReuse": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "description": "Reuse modes the policy permits; never null.",
+            "items": {
+              "enum": [
+                "copy",
+                "dependency",
+                "adapt",
+                "reference"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "preferred": {
+            "description": "Permitted modes in preference order; never null.",
+            "items": {
+              "enum": [
+                "copy",
+                "dependency",
+                "adapt",
+                "reference"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "allowed",
+          "preferred"
+        ],
+        "type": "object"
+      },
+      "PolicySecurity": {
+        "additionalProperties": false,
+        "properties": {
+          "known_advisory": {
+            "description": "Action when a known advisory identifier was reported.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "unknown": {
+            "description": "Action when the advisory picture is unknown.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "known_advisory",
+          "unknown"
+        ],
+        "type": "object"
+      },
+      "PolicySelection": {
+        "additionalProperties": false,
+        "properties": {
+          "max_options": {
+            "description": "Maximum number of candidates in the shortlist.",
+            "format": "int64",
+            "maximum": 5,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_options"
+        ],
+        "type": "object"
+      },
+      "PolicySource": {
+        "additionalProperties": false,
+        "properties": {
+          "missing_revision": {
+            "description": "Action when a required revision is missing.",
+            "enum": [
+              "allow",
+              "review",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "require_revision_for": {
+            "description": "Reuse modes that require a pinned revision; never null.",
+            "items": {
+              "enum": [
+                "copy",
+                "dependency",
+                "adapt",
+                "reference"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "require_revision_for",
+          "missing_revision"
+        ],
+        "type": "object"
+      },
+      "Primitive": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_id": {
+            "description": "The contract this primitive is described by.",
+            "type": "string"
+          },
+          "description": {
+            "description": "What the capability means.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Opaque Reusery primitive id.",
+            "examples": [
+              "process/bounded-subprocess"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "Human-readable capability name.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Free-form tags; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "tags",
+          "contract_id"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "Stable machine-readable error code from the documented API vocabulary.",
+            "examples": [
+              "invalid_request"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "description": "Human-readable explanation specific to this occurrence.",
+            "examples": [
+              "candidate request is invalid"
+            ],
+            "type": "string"
+          },
+          "errors": {
+            "description": "Optional list of individual error details.",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "HTTP status code.",
+            "examples": [
+              422
+            ],
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "Short, human-readable summary of the problem type.",
+            "examples": [
+              "Unprocessable Entity"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "description": "URI reference for the problem type.",
+            "examples": [
+              "about:blank"
+            ],
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "detail",
+          "code"
+        ],
+        "type": "object"
+      },
+      "PublishedAtFact": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "known": {
+            "description": "Whether a publication time was observed.",
+            "type": "boolean"
+          },
+          "published_at": {
+            "description": "Observed publication time, or null when unknown.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "published_at",
+          "known",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "RefineRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "description": "The bounded candidate set; never null.",
+            "items": {
+              "$ref": "#/components/schemas/CandidateRef"
+            },
+            "type": "array"
+          },
+          "contract_id": {
+            "description": "Contract being resolved.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "feedback": {
+            "description": "Complete accumulated feedback history; at least one item.",
+            "items": {
+              "$ref": "#/components/schemas/Feedback"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/Policy",
+            "description": "The original base policy, not a previously derived effective policy."
+          },
+          "primitive_id": {
+            "description": "Primitive being resolved.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "primitive_id",
+          "contract_id",
+          "candidates",
+          "policy",
+          "feedback"
+        ],
+        "type": "object"
+      },
+      "Rejection": {
+        "additionalProperties": false,
+        "properties": {
+          "reasons": {
+            "description": "Why it was rejected; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "specimen_id": {
+            "description": "Rejected candidate.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "specimen_id",
+          "reasons"
+        ],
+        "type": "object"
+      },
+      "Requirement": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "The claim.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Opaque requirement id.",
+            "examples": [
+              "req-001"
+            ],
+            "type": "string"
+          },
+          "kind": {
+            "description": "Requirement kind from the intent vocabulary.",
+            "examples": [
+              "behavior"
+            ],
+            "type": "string"
+          },
+          "required": {
+            "description": "Whether satisfaction is mandatory for direct reuse.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "kind",
+          "required"
+        ],
+        "type": "object"
+      },
+      "RequirementEvaluation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "description": "Behavioural evidence used; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requirement_id": {
+            "description": "Requirement evaluated.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Behavioural verdict.",
+            "enum": [
+              "satisfied",
+              "failed",
+              "unknown",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement_id",
+          "status",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "Resolution": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_id": {
+            "description": "Contract resolved.",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "description": "Evidence consulted; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "description": "Resolution outcome.",
+            "enum": [
+              "reuse",
+              "adapt",
+              "depend",
+              "reference",
+              "build_locally"
+            ],
+            "type": "string"
+          },
+          "policy_id": {
+            "description": "Policy profile that justified the decision.",
+            "type": "string"
+          },
+          "primitive_id": {
+            "description": "Primitive resolved.",
+            "type": "string"
+          },
+          "reasons": {
+            "description": "Deterministic reasons; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rejected": {
+            "description": "Negative knowledge preserved; never null.",
+            "items": {
+              "$ref": "#/components/schemas/Rejection"
+            },
+            "type": "array"
+          },
+          "resolved_at": {
+            "description": "When the decision was recorded.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "specimen_id": {
+            "description": "Selected specimen, empty for build_locally.",
+            "type": "string"
+          },
+          "unknowns": {
+            "description": "Unresolved required requirements; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "primitive_id",
+          "contract_id",
+          "outcome",
+          "specimen_id",
+          "reasons",
+          "rejected",
+          "unknowns",
+          "evidence_ids",
+          "policy_id",
+          "resolved_at"
+        ],
+        "type": "object"
+      },
+      "ResolveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "description": "Candidates to consider; never null.",
+            "items": {
+              "$ref": "#/components/schemas/CandidateRef"
+            },
+            "type": "array"
+          },
+          "contract_id": {
+            "description": "Contract being resolved.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/Policy",
+            "description": "Structured policy profile to evaluate under."
+          },
+          "primitive_id": {
+            "description": "Primitive being resolved.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "primitive_id",
+          "contract_id",
+          "candidates",
+          "policy"
+        ],
+        "type": "object"
+      },
+      "RevisionFact": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "known": {
+            "description": "Whether a revision was observed.",
+            "type": "boolean"
+          },
+          "revision": {
+            "description": "Observed revision, or empty.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Fact status.",
+            "enum": [
+              "known",
+              "unknown",
+              "multiple",
+              "conflicting"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "revision",
+          "known",
+          "evidence_ids"
+        ],
+        "type": "object"
+      },
+      "SourceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "license": {
+            "description": "Declared licence when the source declares one.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Path within the source when applicable.",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Pinned revision when one is known.",
+            "type": "string"
+          },
+          "url": {
+            "description": "Attributable source URL.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "revision",
+          "path",
+          "license"
+        ],
+        "type": "object"
+      },
+      "Specimen": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Opaque Reusery specimen id.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Human-readable specimen name.",
+            "type": "string"
+          },
+          "primitive_id": {
+            "description": "The primitive this specimen was discovered for.",
+            "type": "string"
+          },
+          "reuse_modes": {
+            "description": "Reuse modes the specimen declares; never null.",
+            "items": {
+              "enum": [
+                "copy",
+                "dependency",
+                "adapt",
+                "reference"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRef",
+            "description": "Attributable source."
+          }
+        },
+        "required": [
+          "id",
+          "primitive_id",
+          "name",
+          "source",
+          "reuse_modes"
+        ],
+        "type": "object"
+      },
+      "SpecimenEnrichReport": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_count": {
+            "description": "Observations recorded for this specimen.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "providers": {
+            "description": "Per-provider reports; never null.",
+            "items": {
+              "$ref": "#/components/schemas/EnrichProviderReport"
+            },
+            "type": "array"
+          },
+          "specimen_id": {
+            "description": "Specimen enriched.",
+            "type": "string"
+          },
+          "supported": {
+            "description": "Whether any provider supported this specimen.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "specimen_id",
+          "supported",
+          "evidence_count",
+          "providers"
+        ],
+        "type": "object"
+      },
+      "StatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "description": "ok or not ready.",
+            "examples": [
+              "ok"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "StoredResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "resolution": {
+            "$ref": "#/components/schemas/Resolution",
+            "description": "The remembered resolution."
+          },
+          "resolution_id": {
+            "description": "PostgreSQL storage identity.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resolution_id",
+          "resolution"
+        ],
+        "type": "object"
+      },
+      "Tradeoff": {
+        "additionalProperties": false,
+        "properties": {
+          "dimension": {
+            "description": "Dimension the tradeoff belongs to.",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "description": "Backing evidence; never null.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "message": {
+            "description": "Deterministic human-readable statement.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dimension",
+          "message",
+          "evidence_ids"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Stable HTTP surface over Reusery's existing application services.\n\nImportant semantics this contract preserves:\n\n- **discovery is not verification.** Discovery only records INFO/UNKNOWN observations.\n- **REFERENCE is not contract satisfaction.** A reference resolution keeps every\n  unresolved required behavioural requirement as an unknown.\n- **needs_verification is not a failure.** It is a valid HTTP 200 result that\n  persists nothing.\n- **BUILD LOCALLY is a valid resolution outcome**, not an error.\n- Metadata from providers can never produce a behavioural pass.\n\nReusery is not yet an authenticated production service; see docs/http-api.md.",
+    "title": "Reusery API",
+    "version": "v1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "description": "Always HTTP 200 while the process is running. It never checks PostgreSQL, OpenAI, GitHub, pkg.go.dev or deps.dev, so a degradable provider outage never makes this endpoint fail.",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Liveness probe.",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/ready": {
+      "get": {
+        "description": "HTTP 200 when every registered readiness checker passes; HTTP 503 when one fails. Only PostgreSQL is a readiness dependency; model and discovery providers are degradable and are never checked here.",
+        "operationId": "readyCheck",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Readiness probe.",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/v1/contracts": {
+      "get": {
+        "description": "Selects a contract by opaque Reusery id supplied as a query parameter.",
+        "operationId": "getContract",
+        "parameters": [
+          {
+            "description": "Opaque Reusery contract id.",
+            "explode": false,
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Opaque Reusery contract id.",
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Contract"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Fetch one stored contract with its requirements.",
+        "tags": [
+          "Inspection"
+        ]
+      }
+    },
+    "/v1/discover": {
+      "post": {
+        "description": "Accepts the structured Packet 5 discovery profile as JSON; the API never accepts a filesystem path, a --root or a profile filename. Provider data is INFO/UNKNOWN only, partial provider failure remains inspectable in the response, and discovery never resolves a candidate. Discovery is not verification.\n\nRequest body limit: 64 KiB.",
+        "operationId": "discoverCandidates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoveryProfile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Run one bounded public discovery profile.",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/v1/enrich": {
+      "post": {
+        "description": "Runs the bounded Packet 7 enrichment pass and persists INFO/UNKNOWN observations under the Packet 7 trust rules. It never creates behavioural PASS or FAIL evidence, never selects a candidate and never resolves. If at least one provider succeeds the response is HTTP 200 with the provider issues intact; only an all-provider failure is an upstream error.\n\nRequest body limit: 32 KiB.",
+        "operationId": "enrichCandidates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrichRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrichResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Record attributable external metadata for named specimens.",
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/v1/evidence": {
+      "get": {
+        "description": "Results are ordered by observed_at ascending then evidence id ascending and paginated with an opaque cursor. The default limit is 50 and the maximum is 100; the response never contains an unbounded evidence array. `next_cursor` is null on the final page.",
+        "operationId": "listEvidence",
+        "parameters": [
+          {
+            "description": "Opaque Reusery specimen id whose evidence is wanted.",
+            "explode": false,
+            "in": "query",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque Reusery specimen id whose evidence is wanted.",
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page size; defaults to 50 and may not exceed 100.",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "Page size; defaults to 50 and may not exceed 100.",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque cursor from a previous page; omit for the first page.",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Opaque cursor from a previous page; omit for the first page.",
+              "maxLength": 2048,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidencePage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Fetch a bounded, ordered page of evidence for one subject.",
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/v1/normalize": {
+      "post": {
+        "description": "Converts natural language into a provisional capability, contract, constraints, ambiguities and assumptions. `ready`, `needs_clarification` and `unsupported` are all valid product results and all return HTTP 200. Only a model-provider or configuration failure is an HTTP error.\n\nThis operation does not persist intent, does not discover candidates, does not enrich and does not resolve: the stages remain explicit and the client chooses them.\n\nRequest body limit: 16 KiB.",
+        "operationId": "normalizeIntent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NormalizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Normalise ordinary engineering intent into a structured Packet 6 result.",
+        "tags": [
+          "Intent"
+        ]
+      }
+    },
+    "/v1/primitives": {
+      "get": {
+        "description": "Selects a primitive by opaque Reusery id. Domain ids contain characters such as / @ : and % and are passed as a query parameter rather than a path segment, because they must be treated as opaque strings.",
+        "operationId": "getPrimitive",
+        "parameters": [
+          {
+            "description": "Opaque Reusery primitive id.",
+            "explode": false,
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Opaque Reusery primitive id.",
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Primitive"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Fetch one stored primitive.",
+        "tags": [
+          "Inspection"
+        ]
+      }
+    },
+    "/v1/refine": {
+      "post": {
+        "description": "Stateless refinement: the caller resends the same base policy, the same bounded candidate set and the complete accumulated feedback history. The server derives the effective policy from scratch on every call, so feedback is never applied twice and clients must not feed a previously derived effective policy back as the base. At least one feedback item is required. This calls the same Packet 7 quality service as /v1/resolve and implements no feedback logic of its own.\n\nRequest body limit: 256 KiB.",
+        "operationId": "refineResolution",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Reject a result with structured feedback and re-resolve deterministically.",
+        "tags": [
+          "Resolver"
+        ]
+      }
+    },
+    "/v1/resolutions/{resolution_id}": {
+      "get": {
+        "description": "Returns the remembered decision exactly as it was recorded. It does not re-evaluate current evidence. The id is the PostgreSQL storage identity, which is numeric and therefore safe as a path parameter.",
+        "operationId": "getResolution",
+        "parameters": [
+          {
+            "description": "PostgreSQL storage identity of the resolution.",
+            "in": "path",
+            "name": "resolution_id",
+            "required": true,
+            "schema": {
+              "description": "PostgreSQL storage identity of the resolution.",
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredResolution"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Fetch a previously persisted Resolution.",
+        "tags": [
+          "Inspection"
+        ]
+      }
+    },
+    "/v1/resolve": {
+      "post": {
+        "description": "Uses the Packet 7 quality service. The policy is supplied as structured JSON; clients never submit a filesystem policy path. Initial resolve requests carry no feedback.\n\nBoth `resolved` and `needs_verification` return HTTP 200. When resolved, `resolution_id` and `resolution` are present and exactly one Resolution is persisted. When `needs_verification`, both are null and nothing is persisted: needs_verification is not a failure and not BUILD LOCALLY.\n\nA `reference` outcome preserves every unresolved required behavioural requirement as an unknown and never claims contract satisfaction.\n\nRequest body limit: 256 KiB.",
+        "operationId": "resolveCandidates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Compare candidates under a structured policy and produce a Packet 7 decision.",
+        "tags": [
+          "Resolver"
+        ]
+      }
+    },
+    "/v1/specimens": {
+      "get": {
+        "description": "Selects a specimen by opaque Reusery id supplied as a query parameter.",
+        "operationId": "getSpecimen",
+        "parameters": [
+          {
+            "description": "Opaque Reusery specimen id.",
+            "explode": false,
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Opaque Reusery specimen id.",
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specimen"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Fetch one stored specimen.",
+        "tags": [
+          "Inspection"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Liveness and readiness probes. They never depend on degradable providers.",
+      "name": "Operations"
+    },
+    {
+      "description": "Packet 6 intent normalisation. ready, needs_clarification and unsupported are all valid HTTP 200 results.",
+      "name": "Intent"
+    },
+    {
+      "description": "Packet 5 bounded public discovery. Discovery records INFO/UNKNOWN observations only: discovery is not verification.",
+      "name": "Discovery"
+    },
+    {
+      "description": "Packet 7 metadata enrichment and evidence inspection. Provider metadata can never create a behavioural pass.",
+      "name": "Evidence"
+    },
+    {
+      "description": "Packet 7 quality resolution and stateless refinement. needs_verification is not a failure and BUILD LOCALLY is a valid resolution.",
+      "name": "Resolver"
+    },
+    {
+      "description": "Read-only access to stored primitives, contracts, specimens and resolutions. Opaque Reusery ids travel as query parameters.",
+      "name": "Inspection"
+    }
+  ]
+}

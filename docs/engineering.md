@@ -19,10 +19,17 @@ without a packet that asks for it.
 ## Why standard `net/http`
 
 The Packet 1 server needs routing for two endpoints, timeouts and graceful
-shutdown. `net/http` (with `http.ServeMux`) covers all of it. No Gin, Echo
-or Fiber: a framework would add dependency and CVE surface for zero current
-benefit. Revisit only when a later packet demonstrates a concrete need
-(e.g. OpenAPI-driven handlers).
+shutdown. `net/http` (with `http.ServeMux`) covers all of it. No Gin, Echo,
+Fiber, Chi or Gorilla Mux: a router framework would add dependency and CVE
+surface for zero benefit.
+
+Packet 8 keeps `http.ServeMux` as the router and adds **Huma v2.39.1** with
+its `humago` adapter, which registers typed operations directly onto the
+standard mux. Huma is added for the typed HTTP boundary, request validation,
+OpenAPI 3.1, JSON Schema, RFC 9457 error support and generated documentation.
+It is explicitly **not** added to own server lifecycle, configuration,
+database access, logging architecture, resolver semantics or provider
+orchestration: those stay ours.
 
 ## Why `log/slog`
 
@@ -41,10 +48,15 @@ the same YAML parser. No GitHub SDK — the three REST calls Packet 5 needs are
 trivially hand-written, and an SDK would add dependency and CVE surface for no
 benefit. Packet 6 also adds **zero** dependencies: the OpenAI Responses API
 call is `net/http` + `encoding/json`, the prompt and schema are embedded with
-`embed`, and the evaluation corpus reuses the same YAML parser. No AI
-orchestration framework, no OpenAI SDK. Auth, Redis, queues, ORMs, search and
-telemetry still belong to later packets. Each future dependency must justify
-itself against the standard library first.
+`embed`, and the evaluation corpus reuses the same YAML parser. Packet 7 adds
+**zero** dependencies. Packet 8 adds exactly one: **`github.com/danielgtaylor/huma/v2 v2.39.1`**
+(plus its `humago` adapter and `queryparam` helper from the same module) for
+the typed HTTP/OpenAPI boundary — no OpenAPI generator, no Swagger generator,
+no `oapi-codegen`, no router, no middleware framework, no UUID library, no
+validation library. It is a library dependency, so there is no install-tools
+entry for it. Auth, Redis, queues, ORMs, search and telemetry still belong to
+later packets. Each future dependency must justify itself against the
+standard library first.
 
 ## Configuration
 
@@ -57,12 +69,22 @@ REUSERY_DATABASE_URL=postgres://... # REQUIRED (Packet 3 onwards)
 REUSERY_GITHUB_TOKEN=               # optional, discovery rate limits only
 REUSERY_OPENAI_API_KEY=             # optional, model-backed commands only
 REUSERY_OPENAI_MODEL=gpt-6-luna     # optional model override
+REUSERY_API_ENABLE_EXTERNAL_OPERATIONS=false  # HTTP-only switch (Packet 8)
 ```
 
 No config framework: `os.Getenv` plus a small parser is sufficient.
 `ParseLogLevel` falls back to `info` on unknown values so a typo can neither
 crash startup nor silently disable logging. Copy `.env.example` to `.env`
 for local overrides; `.env` is git-ignored and must never be committed.
+
+`REUSERY_API_ENABLE_EXTERNAL_OPERATIONS` is parsed strictly by
+`ParseStrictBool`: only `true` or `false`, case-insensitively. An unset value
+means `false`; anything else (`yes-please`, `1`, `on`) is a configuration
+error rather than a silent default, because the switch guards HTTP operations
+that spend model tokens and provider quota. It gates only the HTTP routes
+`/v1/normalize`, `/v1/discover` and `/v1/enrich`; the equivalent CLI commands
+are unaffected, readiness never fails because it is false, and `resolve`,
+`refine`, inspection, `/health` and `/ready` stay available.
 
 `Load()` returns `(Config, error)`. Since Packet 3 the database URL is
 mandatory and validated (postgres/postgresql URL or libpq keyword form), so
@@ -83,22 +105,38 @@ database URL, so `reusery normalize` and `reusery normalize-eval` work with no
 PostgreSQL configured at all: natural-language structuring and the database are
 independent concerns. The key is optional globally and required only by
 commands that actually invoke OpenAI; it is never logged, never persisted and
-never included in an error.
+never included in an error. Since Packet 8 the HTTP server also starts with no
+key: the normaliser is only constructed inside a `/v1/normalize` request, and
+a missing key there answers 503 `model_provider_unconfigured` instead of
+failing startup.
 
 ## HTTP server
 
-`internal/server` owns construction and lifecycle; `cmd/reusery/main.go`
-stays thin (wire config → logger → server → signals).
+`internal/server` owns **only** the generic lifecycle — listen, timeouts,
+cancellation propagation and graceful shutdown. It knows nothing about
+Reusery's routes or domain. `internal/api` owns the HTTP contract and hands
+`server.New` an `http.Handler`.
 
-- Timeouts: read 10s, read-header 5s, write 10s, idle 60s, shutdown 10s.
-- `GET /health` — liveness only, never touches PostgreSQL.
-- `GET /ready` — runs registered `ReadyChecker`s. Packet 3 registers the
-  PostgreSQL readiness checker here; a failing checker yields HTTP 503
-  `{"status":"not ready"}` without leaking database diagnostics. Before
-  Packet 3 there were no checkers, so it was trivially ok.
+- Timeouts: read-header 5s, read 10s, **write 65s**, idle 60s, shutdown 10s.
+  WriteTimeout is 65s because legitimate bounded API operations include two
+  20-second model calls, three bounded discovery provider passes and a
+  30-second enrichment run. Every per-operation budget inside the handlers is
+  strictly tighter, so the application deadline — never the server deadline —
+  terminates a slow request.
+- The serve context is installed as `http.Server.BaseContext`, so cancelling
+  it propagates to every in-flight request context and from there to
+  PostgreSQL, OpenAI, GitHub, pkg.go.dev and deps.dev through
+  `context.Context`.
+- `GET /health` — liveness only, never touches PostgreSQL and never runs a
+  readiness checker.
+- `GET /ready` — runs registered `ReadyChecker`s. Only PostgreSQL is
+  registered: model, GitHub, pkg.go.dev and deps.dev are degradable providers
+  and are never readiness dependencies. A failing checker yields HTTP 503
+  `{"status":"not ready"}` without leaking database diagnostics.
 - Shutdown: `signal.NotifyContext` on Ctrl+C/SIGTERM → `Server.Shutdown`
   with a 10s bound → startup and shutdown both logged via `slog`. The pool is
   closed during the same shutdown.
+
 
 ## PostgreSQL persistence (Packet 3)
 
@@ -462,18 +500,158 @@ reason instead of manufacturing a delta, and `savings_percent` is computed only
 when the baseline value exists and is non-zero. Packet 7 establishes recording
 and aggregation only; **Packet 16 owns release-level validation claims.**
 
+## Stable HTTP API and OpenAPI contract (Packet 8)
+
+Full reference: [docs/http-api.md](http-api.md).
+
+**Layout.**
+
+- `internal/api` — route registration, v1 transport DTOs, the mapping layer,
+  RFC 9457 errors, middleware (request id, version/cache/nosniff headers,
+  bounded request logging) and the per-operation budgets. It depends on
+  interfaces and application services only; it never imports
+  `internal/store/postgres`.
+- `internal/app` — the shared composition root. `NewNormalizer`,
+  `NewDiscoverer`, `NewEnricher` and `NewQualityResolver` are called by both
+  the CLI and the HTTP API, so Packet 9's MCP adapter can call them too. It
+  is a composition root, not an application framework: no request types, no
+  routing, no config loading, no lifecycle, no business logic.
+- `internal/server` — generic lifecycle only: listen, timeouts,
+  cancellation, graceful shutdown. Routes moved out in Packet 8.
+
+**Stack.** Huma v2.39.1 with the `humago` adapter over the standard
+`http.ServeMux`. Operation IDs are frozen contract values
+(`normalizeIntent`, `discoverCandidates`, `enrichCandidates`,
+`resolveCandidates`, `refineResolution`, `getPrimitive`, `getContract`,
+`getSpecimen`, `listEvidence`, `getResolution`, `healthCheck`, `readyCheck`).
+
+**Transport DTO rule.** `internal/api/types.go` declares every v1 type and
+`mapping.go` converts to and from internal domain types, so an innocent
+internal struct edit in a later packet cannot silently break API v1. Domain
+*vocabulary* (`ReuseMode`, `Outcome`, `EvidenceResult`, `DecisionStatus`,
+`Disposition`, `Policy.Action`, `FeedbackReason`) is reused one-for-one
+rather than duplicated.
+
+**OpenAPI generation and drift gate.**
+
+```bash
+go run ./cmd/openapi -write openapi/reusery-v1.json   # regenerate
+go run ./cmd/openapi -check  openapi/reusery-v1.json   # CI gate
+make openapi          # regenerate
+make openapi-check    # CI gate
+```
+
+`cmd/openapi` builds `api.NewHandler(api.Dependencies{})`, which performs no
+I/O: no PostgreSQL, no OpenAI key, no GitHub token, no network. Route
+registration is therefore separated from live service construction. The
+checked-in `openapi/reusery-v1.json` is the shipped 3.1 contract and is
+compared byte-for-byte against generator output by `scripts/check.ps1`,
+`make check` and the CI `verify` job, plus a `TestCheckedInContractMatchesGenerator`
+unit test. After Packet 8 freezes, v1 is a compatibility commitment: new
+optional fields and new operations are fine; renames, enum changes,
+operation-id changes, removed fields and type changes are not.
+
+**Error mapping.** `application/problem+json` with a stable `code`
+extension. 400 malformed JSON · 422 schema/`validation_failed` · 422
+domain/`invalid_request` · 404 `not_found` · 409 `conflict` · 413 oversized
+body · 502 `all_providers_failed` (upstream failed, Reusery is fine) · 503
+`external_operations_disabled` / `model_provider_unconfigured` /
+`upstream_authentication` / `upstream_rate_limited` / `upstream_unavailable`
+· 504 `upstream_timeout` · 500 `internal_error`. Partial provider failure
+stays HTTP 200 with the provider issues intact. Errors never contain a
+database URL, API key, GitHub token, provider authorization header, raw
+provider body or stack trace.
+
+**Request limits and budgets.** Body ceilings 16/64/32/256/256 KiB
+(normalize/discover/enrich/resolve/refine) rejected with 413 before
+application work. Operation budgets: health and ready 3s, inspection 5s,
+resolve and refine 10s, enrich 35s, normalize 45s, discover 50s. Global
+`WriteTimeout` 65s, always larger than the longest budget. No automatic
+retries.
+
+**Cancellation.** `http.Server.BaseContext` returns the serve context, so
+shutdown reaches in-flight requests and propagates to PostgreSQL, OpenAI,
+GitHub, pkg.go.dev and deps.dev.
+
+**External-operations switch.** `REUSERY_API_ENABLE_EXTERNAL_OPERATIONS`,
+strictly `true`/`false`, default `false`. See Configuration above.
+
+**No filesystem or provider-base-URL inputs.** No request field named `root`,
+`path`, `manifest`, `profile_file`, `policy_file` or `corpus_file`, and no
+request can configure an OpenAI/GitHub/pkg.go.dev/deps.dev base URL.
+
+**Retry and idempotency decision.** GET operations are retry-safe. The five
+POST operations are not: normalize costs model tokens, discover and enrich
+record a new observation time, resolve and refine may insert a Resolution.
+No in-memory response cache, no process-local key map, no pretend
+`Idempotency-Key`, and no persistence of raw intent or transient
+assessments — that would reverse deliberate Packet 6/7 persistence decisions
+and invent a data-retention policy before private-project design exists.
+Documented as a deliberate roadmap refinement in `docs/http-api.md`.
+
+**No authentication, no CORS.** Packet 8 has no API keys, accounts, sessions
+or OAuth (Packet 13 owns identity) and no `Access-Control-Allow-Origin`.
+The external-operations switch exists precisely because there is no
+authenticated boundary yet.
+
+**API integration test layout.**
+
+- `internal/api/*_test.go` — offline unit tests with fakes: health/readiness,
+  middleware, normalize, discover, enrich, resolve, refine, inspection,
+  evidence pagination and the OpenAPI document. No network, no database.
+- `internal/api/integration_test.go` (`-tags=integration`) — real PostgreSQL
+  via Testcontainers with `httptest` discovery/enrichment upstreams and a
+  fake model: the inspection → resolve → refine flow, the full
+  normalize → discover → enrich → inspect → resolve → refine → inspect
+  transport flow, and the external-operations-disabled smoke.
+
+**CI network policy.** CI never calls OpenAI, GitHub, pkg.go.dev or deps.dev;
+every API test injects fakes or `httptest` upstreams, so a provider outage
+cannot make CI red.
+
+**Manual live smoke procedure**
+
+```powershell
+# 1. migrate, then seed the canonical first primitive (see README workflows)
+$env:REUSERY_API_ENABLE_EXTERNAL_OPERATIONS = 'true'
+reusery serve
+
+# 2. operational + contract routes
+curl http://localhost:8080/health
+curl http://localhost:8080/ready
+curl http://localhost:8080/openapi.json
+start http://localhost:8080/docs
+
+# 3. the four stages over HTTP, then inspection
+curl -X POST http://localhost:8080/v1/normalize -H 'Content-Type: application/json' -d '{"input":"..."}'
+curl -X POST http://localhost:8080/v1/discover  -H 'Content-Type: application/json' -d '{...profile...}'
+curl -X POST http://localhost:8080/v1/enrich    -H 'Content-Type: application/json' -d '{...specimen_ids...}'
+curl -X POST http://localhost:8080/v1/resolve   -H 'Content-Type: application/json' -d '{...candidates + policy...}'
+curl -X POST http://localhost:8080/v1/refine    -H 'Content-Type: application/json' -d '{...+ feedback...}'
+curl 'http://localhost:8080/v1/contracts?id=process%2Fbounded-subprocess%2Fv1'
+curl 'http://localhost:8080/v1/evidence?subject_id=...&limit=50'
+curl http://localhost:8080/v1/resolutions/1
+
+# 4. repeat with the switch off (or unset): /health, /ready, inspection and
+#    resolve/refine still work; normalize, discover and enrich return 503
+#    code external_operations_disabled, and no paid/provider call is made.
+```
+
 ## Quality checks
 
 ```powershell
 gofmt -s -l -w .            # formatting (write)
 sqlc generate            # regenerate query code
 git diff --exit-code -- internal/store/postgres/sqlc   # drift check
+go run ./cmd/openapi -check openapi/reusery-v1.json    # OpenAPI drift check
 go vet ./...             # static analysis
+go vet -tags=integration ./...
 go test ./...            # unit tests
 go test -tags=integration ./... # Docker required
 golangci-lint run ./...  # lint (config: .golangci.yml)
 govulncheck ./...        # vulnerability scan
 go build ./cmd/reusery   # build
+go build ./cmd/openapi   # contract generator builds
 ```
 
 - `./scripts/check.ps1` runs all of the above on Windows; `make check`
@@ -491,14 +669,38 @@ go build ./cmd/reusery   # build
 - CI (`.github/workflows/ci.yml`) uses current action majors:
   `actions/checkout@v6`, `actions/setup-go@v6` (Go 1.27.1),
   `golangci/golangci-lint-action@v9` (golangci-lint v2.14.0), plus
-  `govulncheck` and the sqlc drift check.
+  `govulncheck`, the sqlc drift check and the OpenAPI contract drift check.
 
 ## Tests
 
 Standard `testing` only. Coverage is behavioural, not numeric:
 
-- `internal/server` — `/health` and `/ready` status codes, JSON bodies,
-  content-type headers, and the failing-checker 503 path.
+- `internal/server` — handler wiring, the corrected timeout set (including
+  the 65s write timeout) and `BaseContext` cancellation propagation, plus the
+  graceful-shutdown lifecycle test. `/health` and `/ready` behaviour is
+  asserted in `internal/api` now that routes live there.
+- `internal/api` — health/readiness (Packet 1 semantics preserved, including
+  "health never runs a readiness checker"), middleware (request id accept /
+  generate / replace, `Reusery-API-Version`, `Cache-Control: no-store`,
+  `X-Content-Type-Options`, log fields with no bodies or secrets, no CORS),
+  normalize (all three valid statuses → 200, invalid input → 422, disabled →
+  503, unconfigured model → 503, upstream auth/rate-limit/timeout mappings,
+  413, unknown field → 422, arrays never null), discover (success, zero
+  candidates, partial failure → 200 with issues, all-failed → 502 with safe
+  issues, invalid profile → 422, disabled → 503, 413, filesystem fields
+  rejected), enrich (success, partial → 200, all-failed → 502, empty/absent/
+  duplicate/oversized → 422, evidence conflict → 409, disabled → 503),
+  resolve/refine through the real Packet 7 `QualityService` over an
+  in-memory repository (eligible → resolved, reference → REFERENCE with
+  honest wording, all blocked → BUILD LOCALLY, metadata-only →
+  needs_verification with nothing persisted, feedback refinements for all six
+  reasons, determinism, negative knowledge), inspection of slash-containing
+  opaque IDs with 404s, evidence pagination (default 50, limit 1/100/101,
+  ordering, cursor round-trip, malformed cursor → 422, no duplicate or skip,
+  empty final page) and the OpenAPI document (3.1, operation IDs, paths,
+  tags, enums, nullable decision fields, body limits, problem schema, no
+  internal type names, golden drift). Integration variants run against real
+  PostgreSQL with `httptest` upstreams.
 - `internal/resolver` — deterministic evaluation semantics (Packet 2), the
   resolution kernel and the application service (Packet 4), and the Packet 7
   quality layer: dispositions, policy-driven assessment, lexicographic
@@ -528,8 +730,10 @@ Standard `testing` only. Coverage is behavioural, not numeric:
   an authored policy (no network), and `normalize` / `normalize-eval` with an
   injected normaliser, including the proof that none of these leak network or
   database access into a command that must not have it.
-- `internal/config` — defaults, env overrides, blank-value handling, missing
-  and malformed database URL rejection, level parsing, the optional GitHub
+- `internal/config` — defaults, env overrides, blank-value handling, the strict
+  REUSERY_API_ENABLE_EXTERNAL_OPERATIONS parse (true/false only, nonsense
+  rejected, default false, never leaking the database URL), missing and
+  malformed database URL rejection, level parsing, the optional GitHub
   token never leaking into errors, and the separate `LoadModel` path that
   succeeds with no database URL.
 - `internal/discovery` — profile loading and structural validation, evidence

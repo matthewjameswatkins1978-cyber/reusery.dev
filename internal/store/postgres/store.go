@@ -4,16 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/model"
+	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store"
 	"github.com/matthewjameswatkins1978-cyber/reusery.dev/internal/store/postgres/sqlc"
 )
 
-// ErrNotFound reports that a requested row does not exist.
-var ErrNotFound = errors.New("postgres: not found")
+// ErrNotFound reports that a requested row does not exist. It is the shared
+// store sentinel so transport layers never import this package just to
+// recognise a missing row.
+var ErrNotFound = store.ErrNotFound
 
 // Store persists the Reusery domain model in PostgreSQL.
 //
@@ -130,6 +134,31 @@ func (s *Store) ListEvidenceBySubject(ctx context.Context, subjectID string) ([]
 	rows, err := s.queries.ListEvidenceBySubject(ctx, subjectID)
 	if err != nil {
 		return nil, fmt.Errorf("list evidence for %q: %w", subjectID, err)
+	}
+	items := make([]model.Evidence, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, evidenceFromRow(row))
+	}
+	return items, nil
+}
+
+// ListEvidenceAfter returns at most limit observations for subjectID in
+// (observed_at, id) order, continuing strictly after the supplied key.
+//
+// It backs the paginated public inspection API. A zero after and empty afterID
+// start at the oldest observation. The evidence_subject_idx index on
+// subject_id covers the leading predicate; the composite ordering columns are
+// not indexed because the bounded page size makes a sort of the matching rows
+// cheaper than maintaining a second index speculatively.
+func (s *Store) ListEvidenceAfter(ctx context.Context, subjectID string, after time.Time, afterID string, limit int) ([]model.Evidence, error) {
+	rows, err := s.queries.ListEvidencePage(ctx, sqlc.ListEvidencePageParams{
+		SubjectID:       subjectID,
+		AfterObservedAt: timeToPg(after),
+		AfterID:         afterID,
+		PageLimit:       int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list evidence page for %q: %w", subjectID, err)
 	}
 	items := make([]model.Evidence, 0, len(rows))
 	for _, row := range rows {
